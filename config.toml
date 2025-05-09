@@ -1,0 +1,18 @@
+# LeafComplexR Configuration
+
+# Input/Output Paths
+input_path = "./input"  # Path to a single image or a directory for batch processing
+output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will be created
+
+# Image Processing Parameters
+# resize_dimensions = [800, 600]  # Optional [width, height] - Comment out or set to null to use original size
+opening_kernel_size = 53  # Diameter/radius for the circular opening algorithm's structuring element
+marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
+
+# Analysis Parameters
+reference_point_choice = "COM"  # Either "EP" (EmergePoint) or "COM" (Center of Mass)
+golden_spiral_rotation_steps = 36  # Number of steps for spiral rotation search (if needed)
+golden_spiral_phi_exponent_factor = 0.6366197723675814  # 2/π - Controls spiral growth rate
+
+# Parallel Processing
+use_parallel = true  
