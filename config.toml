@@ -5,7 +5,9 @@ input_path = "./input"  # Path to a single image or a directory for batch proces
 output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will be created
 
 # Image Processing Parameters
-# resize_dimensions = [800, 600]  # Optional [width, height] - Comment out or set to null to use original size
+resize_dimensions = [800, 600]  # Optional [width, height] for batch processing
+gui_resize_dimensions = [512, 512]  # Optional [width, height] for GUI mode - speeds up analysis
+
 opening_kernel_size = 53  # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
 
@@ -15,4 +17,4 @@ golden_spiral_rotation_steps = 36  # Number of steps for spiral rotation search 
 golden_spiral_phi_exponent_factor = 0.6366197723675814  # 2/π - Controls spiral growth rate
 
 # Parallel Processing
-use_parallel = true  
+use_parallel = true

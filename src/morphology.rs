@@ -1,5 +1,6 @@
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::cmp::{max, min};
+use rayon::prelude::*;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::image_utils::{create_circular_kernel, in_bounds, has_rgb_color, ALPHA_THRESHOLD};
@@ -126,11 +127,105 @@ pub fn apply_opening(
         ));
     }
     
+    // Create circular kernel once
     let kernel = create_circular_kernel(kernel_size);
-    let eroded = erode_alpha(image, &kernel);
-    let opened = dilate_alpha(&eroded, &kernel);
     
-    Ok(opened)
+    // Pre-compute kernel properties
+    let (k_width, k_height) = kernel.dimensions();
+    let k_radius_x = (k_width / 2) as i32;
+    let k_radius_y = (k_height / 2) as i32;
+    
+    // Create kernel lookup for faster access
+    let mut kernel_pixels = vec![false; (k_width * k_height) as usize];
+    for ky in 0..k_height {
+        for kx in 0..k_width {
+            if kernel.get_pixel(kx, ky)[0] > 0 {
+                kernel_pixels[(ky * k_width + kx) as usize] = true;
+            }
+        }
+    }
+    
+    // Image properties
+    let (width, height) = image.dimensions();
+    
+    // Apply erosion - using a non-parallel implementation first to fix the issues
+    let mut eroded = RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let original = image.get_pixel(x, y);
+            
+            // Skip transparent pixels - they stay transparent
+            if original[3] < ALPHA_THRESHOLD {
+                eroded.put_pixel(x, y, *original);
+                continue;
+            }
+            
+            let mut erode = false;
+            // Check kernel
+            'kernel_check: for ky in 0..k_height {
+                for kx in 0..k_width {
+                    if kernel_pixels[(ky * k_width + kx) as usize] {
+                        let img_x = x as i32 + (kx as i32) - k_radius_x;
+                        let img_y = y as i32 + (ky as i32) - k_radius_y;
+                        
+                        if img_x < 0 || img_y < 0 || img_x >= width as i32 || img_y >= height as i32 {
+                            erode = true;
+                            break 'kernel_check;
+                        }
+                        
+                        let img_alpha = image.get_pixel(img_x as u32, img_y as u32)[3];
+                        if img_alpha < ALPHA_THRESHOLD {
+                            erode = true;
+                            break 'kernel_check;
+                        }
+                    }
+                }
+            }
+            
+            let new_pixel = if erode {
+                Rgba([original[0], original[1], original[2], 0])
+            } else {
+                *original
+            };
+            eroded.put_pixel(x, y, new_pixel);
+        }
+    }
+    
+    // Apply dilation
+    let mut dilated = RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let original = eroded.get_pixel(x, y);
+            
+            let mut dilate = false;
+            // Check kernel
+            'kernel_check: for ky in 0..k_height {
+                for kx in 0..k_width {
+                    if kernel_pixels[(ky * k_width + kx) as usize] {
+                        let img_x = x as i32 + (kx as i32) - k_radius_x;
+                        let img_y = y as i32 + (ky as i32) - k_radius_y;
+                        
+                        if img_x >= 0 && img_y >= 0 && img_x < width as i32 && img_y < height as i32 {
+                            let img_alpha = eroded.get_pixel(img_x as u32, img_y as u32)[3];
+                            if img_alpha >= ALPHA_THRESHOLD {
+                                dilate = true;
+                                break 'kernel_check;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            let new_pixel = if dilate {
+                Rgba([original[0], original[1], original[2], original[3].max(1)])
+            } else {
+                *original
+            };
+            dilated.put_pixel(x, y, new_pixel);
+        }
+    }
+    
+    Ok(dilated)
 }
 
 /// Create a marked image where opened regions are colored

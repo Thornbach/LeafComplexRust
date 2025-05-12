@@ -8,21 +8,21 @@ use crate::errors::{LeafComplexError, Result};
 /// Configuration for LeafComplexR
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    // Input/Output Paths
+    // Existing fields...
     pub input_path: String,
     pub output_base_dir: String,
-
-    // Image Processing Parameters
     pub resize_dimensions: Option<[u32; 2]>,
+    
+    // Add a specific resize option for GUI mode
+    #[serde(default = "default_gui_resize")]
+    pub gui_resize_dimensions: Option<[u32; 2]>,
+    
+    // Other fields...
     pub opening_kernel_size: u32,
     pub marked_region_color_rgb: [u8; 3],
-
-    // Analysis Parameters
     pub reference_point_choice: ReferencePointChoice,
     pub golden_spiral_rotation_steps: u32,
     pub golden_spiral_phi_exponent_factor: f64,
-    
-    // Parallel Processing
     #[serde(default = "default_parallel")]
     pub use_parallel: bool,
 }
@@ -39,6 +39,10 @@ pub enum ReferencePointChoice {
 
 fn default_parallel() -> bool {
     true
+}
+
+fn default_gui_resize() -> Option<[u32; 2]> {
+    Some([512, 512])
 }
 
 impl Config {
@@ -65,6 +69,7 @@ impl Config {
             input_path: "./input".to_string(),
             output_base_dir: "./output".to_string(),
             resize_dimensions: Some([800, 600]),
+            gui_resize_dimensions: Some([512, 512]), // Default GUI resize to 512x512
             opening_kernel_size: 5,
             marked_region_color_rgb: [255, 0, 255], // Bright pink
             reference_point_choice: ReferencePointChoice::Com,

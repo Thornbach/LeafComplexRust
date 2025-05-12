@@ -12,8 +12,10 @@ use crate::image_utils::resize_image;
 use crate::morphology::{apply_opening, mark_opened_regions, trace_contour};
 use crate::path_algorithms::{
     calculate_golden_spiral_params, trace_straight_line, 
-    generate_golden_spiral_path, calculate_straight_path_length,
-    check_straight_line_transparency, is_point_in_polygon, calculate_gyro_path_length
+    calculate_straight_path_length, check_straight_line_transparency, 
+    is_point_in_polygon, calculate_gyro_path_length,
+    generate_left_right_spirals, calculate_clr_points, calculate_gyro_path_pink,
+    calculate_diego_path
 };
 use crate::point_analysis::get_reference_point;
 
@@ -28,6 +30,7 @@ const COLOR_CONTOUR_POINT: u32 = 0x00FF00;   // Green
 const COLOR_SELECTED_POINT: u32 = 0xFF0000;  // Red
 const COLOR_STRAIGHT_PATH: u32 = 0x0000FF;   // Blue
 const COLOR_GOLDEN_PATH: u32 = 0xFF8000;     // Orange
+const COLOR_RIGHT_SPIRAL_PATH: u32 = 0x00FFAA;  // Teal for the right spiral path
 const COLOR_BACKGROUND: u32 = 0x303030;      // Dark gray
 const COLOR_TEXT: u32 = 0xFFFFFF;            // White
 const COLOR_SLIDER_BG: u32 = 0x505050;       // Medium gray
@@ -58,8 +61,13 @@ struct GuiState {
     selected_features: Option<MarginalPointFeatures>,
     straight_path: Vec<(u32, u32)>,
     golden_path: Vec<(u32, u32)>,
+    left_spiral_path: Vec<(u32, u32)>,
+    right_spiral_path: Vec<(u32, u32)>,
+    diego_path: Vec<(u32, u32)>, // New: DiegoPath
     clr_alpha_pixels: Vec<(u32, u32)>,
     clr_gamma_pixels: Vec<(u32, u32)>,
+    right_clr_alpha_pixels: Vec<(u32, u32)>,
+    right_clr_gamma_pixels: Vec<(u32, u32)>,
     
     // Display state
     buffer: Vec<u32>,
@@ -81,12 +89,18 @@ struct GuiState {
     show_transparency: bool,
     show_clr_regions: bool,
     transparency_check_result: bool,
+    show_right_spiral: bool,
+    
+    // Key repeat state for H/L keys
+    key_repeat_timer: Option<Instant>,
+    key_repeat_count: u32,
+    last_key_pressed: Option<Key>,
 }
 
 impl GuiState {
     fn new(image: RgbaImage, config: Config) -> Self {
         let display_width = WINDOW_WIDTH - INFO_PANEL_WIDTH;
-
+    
         Self {
             config,
             original_image: image,
@@ -98,9 +112,14 @@ impl GuiState {
             selected_point_idx: None,
             selected_features: None,
             straight_path: Vec::new(),
-            golden_path: Vec::new(),
+            golden_path: Vec::new(), // This is now the left path
+            left_spiral_path: Vec::new(),
+            right_spiral_path: Vec::new(),
+            diego_path: Vec::new(), // Initialize DiegoPath
             clr_alpha_pixels: Vec::new(),
             clr_gamma_pixels: Vec::new(),
+            right_clr_alpha_pixels: Vec::new(),
+            right_clr_gamma_pixels: Vec::new(),
             buffer: vec![COLOR_BACKGROUND; WINDOW_WIDTH * WINDOW_HEIGHT],
             scale_factor: 1.0,
             offset_x: 0,
@@ -109,13 +128,17 @@ impl GuiState {
             mouse_x: 0,
             mouse_y: 0,
             mouse_down: false,
-            slider_y_coord: 90, // <--- THIS LINE MUST BE PRESENT (e.g., 90 or 100 as a default)
+            slider_y_coord: 90, // Default slider position
             slider_dragging: false,
             last_update: Instant::now(),
             status_message: String::from("Ready"),
             show_transparency: false,
             show_clr_regions: true,
             transparency_check_result: false,
+            show_right_spiral: true, // Start with showing both spirals
+            key_repeat_timer: None,
+            key_repeat_count: 0,
+            last_key_pressed: None,
         }
     }
     
@@ -162,8 +185,13 @@ impl GuiState {
             self.selected_features = None;
             self.straight_path.clear();
             self.golden_path.clear();
+            self.left_spiral_path.clear();
+            self.right_spiral_path.clear();
+            self.diego_path.clear(); // Clear DiegoPath
             self.clr_alpha_pixels.clear();
             self.clr_gamma_pixels.clear();
+            self.right_clr_alpha_pixels.clear();
+            self.right_clr_gamma_pixels.clear();
         }
         
         // Calculate display scale
@@ -224,6 +252,10 @@ impl GuiState {
                 println!("Calculating straight path");
                 self.straight_path = trace_straight_line(ref_point, marginal_point);
                 
+                // Calculate DiegoPath (always calculate)
+                println!("Calculating DiegoPath");
+                self.diego_path = calculate_diego_path(ref_point, marginal_point, marked);
+                
                 // Check if straight line crosses transparency
                 self.transparency_check_result = check_straight_line_transparency(
                     &self.straight_path, 
@@ -232,7 +264,6 @@ impl GuiState {
                 
                 println!("Straight line transparency check: {}", self.transparency_check_result);
                 
-                // Calculate golden spiral path if needed
                 if self.transparency_check_result {
                     println!("Calculating golden spiral path");
                     
@@ -246,17 +277,57 @@ impl GuiState {
                             self.config.golden_spiral_phi_exponent_factor
                         );
                     
-                    // Generate the spiral path
-                    self.golden_path = generate_golden_spiral_path(
+                    // Generate both left and right spiral paths
+                    let (left_path, right_path) = generate_left_right_spirals(
                         ref_point,
                         marginal_point,
                         spiral_a_coeff,
                         theta_contact,
                         self.config.golden_spiral_phi_exponent_factor,
-                        (self.config.golden_spiral_rotation_steps * 2) as usize, // Higher resolution for visualization
+                        (self.config.golden_spiral_rotation_steps * 2) as usize // Higher resolution for visualization
                     );
                     
-                    println!("Golden path length: {}", self.golden_path.len());
+                    // Store the paths for visualization
+                    self.golden_path = left_path.clone(); // For backward compatibility
+                    self.left_spiral_path = left_path;
+                    self.right_spiral_path = right_path;
+                    
+                    // Calculate CLR values for both paths
+                    let (left_alpha, left_gamma) = calculate_clr_points(ref_point, marginal_point, &self.left_spiral_path, marked);
+                    let (right_alpha, right_gamma) = calculate_clr_points(ref_point, marginal_point, &self.right_spiral_path, marked);
+                    
+                    // Update the selected_features with the new CLR values
+                    if let Some(features) = &mut self.selected_features {
+                        // Store individual values
+                        features.left_clr_alpha = left_alpha;
+                        features.left_clr_gamma = left_gamma;
+                        features.right_clr_alpha = right_alpha;
+                        features.right_clr_gamma = right_gamma;
+                        
+                        // Calculate averages
+                        features.clr_alpha = ((left_alpha as f64 + right_alpha as f64) / 2.0).floor() as u32;
+                        features.clr_gamma = ((left_gamma as f64 + right_gamma as f64) / 2.0).floor() as u32;
+                        
+                        // Calculate pink pixels for both paths
+                        if let Some(marked) = marked_image {
+                            let left_pink = calculate_gyro_path_pink(
+                                &self.left_spiral_path, 
+                                marked, 
+                                self.config.marked_region_color_rgb
+                            );
+                            
+                            let right_pink = calculate_gyro_path_pink(
+                                &self.right_spiral_path, 
+                                marked, 
+                                self.config.marked_region_color_rgb
+                            );
+                            
+                            // Store individual and averaged values
+                            features.left_gyro_path_pink = Some(left_pink);
+                            features.right_gyro_path_pink = Some(right_pink);
+                            features.gyro_path_pink = Some(((left_pink as f64 + right_pink as f64) / 2.0).floor() as u32);
+                        }
+                    }
                     
                     // Calculate the actual golden path length using the arc length formula
                     let gyro_path_length = calculate_gyro_path_length(
@@ -274,13 +345,31 @@ impl GuiState {
                     println!("Calculated golden path length: {:.2}", gyro_path_length);
                 } else {
                     self.golden_path.clear();
-                    // Reset golden path values
+                    self.left_spiral_path.clear();
+                    self.right_spiral_path.clear();
+                    
+                    // Reset Gyro path values but keep DiegoPath
                     if let Some(features) = &mut self.selected_features {
                         features.gyro_path_length = 0.0;
                         features.gyro_path_perc = 0.0;
+                        features.clr_alpha = 0;
+                        features.clr_gamma = 0;
+                        features.left_clr_alpha = 0;
+                        features.left_clr_gamma = 0;
+                        features.right_clr_alpha = 0;
+                        features.right_clr_gamma = 0;
+                        features.gyro_path_pink = None;
+                        features.left_gyro_path_pink = None;
+                        features.right_gyro_path_pink = None;
                     }
+                    
+                    // Also clear CLR regions
+                    self.clr_alpha_pixels.clear();
+                    self.clr_gamma_pixels.clear();
+                    self.right_clr_alpha_pixels.clear();
+                    self.right_clr_gamma_pixels.clear();
                 }
-                
+                                
                 println!("Point selection complete");
                 self.status_message = format!("Selected point {} at {:?}", idx, marginal_point);
             }
@@ -299,22 +388,31 @@ impl GuiState {
                 if let Some(features) = &mut self.selected_features {
                     features.clr_alpha = self.clr_alpha_pixels.len() as u32;
                     features.clr_gamma = self.clr_gamma_pixels.len() as u32;
+                    // Make sure right CLR values are properly updated
+                    features.right_clr_alpha = self.right_clr_alpha_pixels.len() as u32;
+                    features.right_clr_gamma = self.right_clr_gamma_pixels.len() as u32;
                 }
             }
         } else {
+            // Always clear all CLR regions when no gyro path is found
             self.clr_alpha_pixels.clear();
             self.clr_gamma_pixels.clear();
+            self.right_clr_alpha_pixels.clear();
+            self.right_clr_gamma_pixels.clear();
             
             // Reset CLR values in selected_features
             if let Some(features) = &mut self.selected_features {
                 features.clr_alpha = 0;
                 features.clr_gamma = 0;
+                features.left_clr_alpha = 0;
+                features.left_clr_gamma = 0;
+                features.right_clr_alpha = 0;
+                features.right_clr_gamma = 0;
             }
         }
         
         Ok(())
     }
-    
     /// Find nearest contour point to mouse position
     fn find_nearest_contour_point(&self, x: usize, y: usize) -> Option<usize> {
         if self.lec_contour.is_empty() {
@@ -353,7 +451,6 @@ impl GuiState {
         let slider_x = self.display_width + 10;
         let slider_y = self.slider_y_coord;
         let slider_width = INFO_PANEL_WIDTH - 20;
-        let slider_height = 10;
         
         // Make the hit area more generous vertically but centered on the slider
         self.mouse_x >= slider_x && 
@@ -403,6 +500,8 @@ impl GuiState {
         println!("Calculating CLR regions");
         self.clr_alpha_pixels.clear();
         self.clr_gamma_pixels.clear();
+        self.right_clr_alpha_pixels.clear();
+        self.right_clr_gamma_pixels.clear();
         
         // Create polygon from straight line and golden path
         let mut polygon = Vec::new();
@@ -455,12 +554,63 @@ impl GuiState {
             }
         }
         
+        // Also calculate for right spiral if enabled
+        if self.show_right_spiral && !self.right_spiral_path.is_empty() {
+            // Similar process for right spiral
+            let mut right_polygon = Vec::new();
+            right_polygon.extend_from_slice(&self.straight_path);
+            
+            let mut right_path_rev = self.right_spiral_path.clone();
+            right_path_rev.reverse();
+            right_polygon.extend_from_slice(&right_path_rev);
+            
+            // Use the same bounding box expanded to include right spiral path
+            let right_expanded_bbox = self.right_spiral_path.iter().fold(
+                (bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y), 
+                |acc, &(x, y)| {
+                    (acc.0.min(x), acc.1.min(y), acc.2.max(x), acc.3.max(y))
+                }
+            );
+            
+            let (r_bbox_min_x, r_bbox_min_y, r_bbox_max_x, r_bbox_max_y) = right_expanded_bbox;
+            
+            for y in r_bbox_min_y..=r_bbox_max_y {
+                if y >= height {
+                    continue;
+                }
+                
+                for x in r_bbox_min_x..=r_bbox_max_x {
+                    if x >= width {
+                        continue;
+                    }
+                    
+                    if is_point_in_polygon(x as f32, y as f32, &right_polygon) {
+                        let pixel = image.get_pixel(x, y);
+                        
+                        if pixel[3] == 0 {
+                            self.right_clr_alpha_pixels.push((x, y));
+                        } else {
+                            self.right_clr_gamma_pixels.push((x, y));
+                        }
+                    }
+                }
+            }
+        }
+        
         println!("CLR_Alpha: {}, CLR_Gamma: {}", 
                 self.clr_alpha_pixels.len(), self.clr_gamma_pixels.len());
+                
+        if self.show_right_spiral {
+            println!("Right CLR_Alpha: {}, Right CLR_Gamma: {}", 
+                    self.right_clr_alpha_pixels.len(), self.right_clr_gamma_pixels.len());
+        }
     }
     
     /// Update the buffer for display
     fn update_buffer(&mut self) {
+        // Add a new color for DiegoPath
+        const COLOR_DIEGO_PATH: u32 = 0xFF00FF; // Magenta
+    
         // Clear buffer
         for pixel in &mut self.buffer {
             *pixel = COLOR_BACKGROUND;
@@ -549,6 +699,48 @@ impl GuiState {
                         }
                     }
                 }
+    
+                if self.show_right_spiral && !self.right_clr_alpha_pixels.is_empty() {
+                    // Draw right spiral CLR regions with different colors
+                    for (i, &(x, y)) in self.right_clr_alpha_pixels.iter().enumerate() {
+                        // Sample every few pixels for performance
+                        if i % 4 != 0 {
+                            continue;
+                        }
+                        
+                        let display_x = (x as f32 * self.scale_factor) as usize + self.offset_x;
+                        let display_y = (y as f32 * self.scale_factor) as usize + self.offset_y;
+                        
+                        if display_x < self.display_width && display_y < WINDOW_HEIGHT {
+                            let idx = display_y * WINDOW_WIDTH + display_x;
+                            if idx < self.buffer.len() {
+                                // Use a slightly different color for right spiral
+                                self.buffer[idx] = 0xFF0000A0; // More reddish
+                            }
+                        }
+                    }
+    
+                    if !self.right_clr_gamma_pixels.is_empty() {
+                        // Draw right spiral CLR gamma pixels
+                        for (i, &(x, y)) in self.right_clr_gamma_pixels.iter().enumerate() {
+                            // Sample every few pixels for performance
+                            if i % 4 != 0 {
+                                continue;
+                            }
+                            
+                            let display_x = (x as f32 * self.scale_factor) as usize + self.offset_x;
+                            let display_y = (y as f32 * self.scale_factor) as usize + self.offset_y;
+                            
+                            if display_x < self.display_width && display_y < WINDOW_HEIGHT {
+                                let idx = display_y * WINDOW_WIDTH + display_x;
+                                if idx < self.buffer.len() {
+                                    // Use a slightly different color for right spiral
+                                    self.buffer[idx] = 0xFF8000A0; // More orangeish
+                                }
+                            }
+                        }
+                    }
+                }
             }
             
             // Draw paths
@@ -566,15 +758,43 @@ impl GuiState {
                 }
             }
             
-            // Draw golden path
-            for &(x, y) in &self.golden_path {
+            // Draw DiegoPath (always draw if available)
+            for &(x, y) in &self.diego_path {
                 let display_x = (x as f32 * self.scale_factor) as usize + self.offset_x;
                 let display_y = (y as f32 * self.scale_factor) as usize + self.offset_y;
                 
                 if display_x < self.display_width && display_y < WINDOW_HEIGHT {
                     let idx = display_y * WINDOW_WIDTH + display_x;
                     if idx < self.buffer.len() {
-                        self.buffer[idx] = COLOR_GOLDEN_PATH;
+                        self.buffer[idx] = COLOR_DIEGO_PATH;
+                    }
+                }
+            }
+            
+            // Draw golden path
+            for &(x, y) in &self.left_spiral_path {
+                let display_x = (x as f32 * self.scale_factor) as usize + self.offset_x;
+                let display_y = (y as f32 * self.scale_factor) as usize + self.offset_y;
+                
+                if display_x < self.display_width && display_y < WINDOW_HEIGHT {
+                    let idx = display_y * WINDOW_WIDTH + display_x;
+                    if idx < self.buffer.len() {
+                        self.buffer[idx] = COLOR_GOLDEN_PATH; // Keep the original color for backward compatibility
+                    }
+                }
+            }
+    
+            // Draw right spiral path if enabled
+            if self.show_right_spiral {
+                for &(x, y) in &self.right_spiral_path {
+                    let display_x = (x as f32 * self.scale_factor) as usize + self.offset_x;
+                    let display_y = (y as f32 * self.scale_factor) as usize + self.offset_y;
+                    
+                    if display_x < self.display_width && display_y < WINDOW_HEIGHT {
+                        let idx = display_y * WINDOW_WIDTH + display_x;
+                        if idx < self.buffer.len() {
+                            self.buffer[idx] = COLOR_RIGHT_SPIRAL_PATH;
+                        }
                     }
                 }
             }
@@ -585,7 +805,7 @@ impl GuiState {
                 let display_y = (point.1 as f32 * self.scale_factor) as usize + self.offset_y;
                 
                 if display_x < self.display_width && display_y < WINDOW_HEIGHT {
-                    draw_circle(&mut self.buffer, display_x, display_y, 2, 
+                    draw_circle(&mut self.buffer, display_x, display_y, 1, 
                         WINDOW_WIDTH, WINDOW_HEIGHT,
                         if Some(i) == self.selected_point_idx {
                             COLOR_SELECTED_POINT
@@ -645,7 +865,7 @@ impl GuiState {
         
         // Store the Y coordinate for the slider and draw it
         self.slider_y_coord = text_y;
-
+    
         // Draw a slider for kernel size
         let slider_x = panel_x;
         let slider_width = INFO_PANEL_WIDTH - 20;
@@ -702,28 +922,53 @@ impl GuiState {
                     panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
             text_y += 20;
             
+            // Always show DiegoPath info
+            draw_text_bitmap(&mut self.buffer, &format!("DiegoPath: {:.2}", features.diego_path_length), 
+                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+            text_y += 20;
+            
+            draw_text_bitmap(&mut self.buffer, &format!("DiegoPath %: {:.2}", features.diego_path_perc), 
+                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+            text_y += 20;
+            
+            if let Some(diego_pink) = features.diego_path_pink {
+                draw_text_bitmap(&mut self.buffer, &format!("DiegoPath_Pink: {}", diego_pink), 
+                        panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+                text_y += 20;
+            }
+            
             if features.gyro_path_length > 0.0 {
                 draw_text_bitmap(&mut self.buffer, &format!("GyroPath: {:.2}", features.gyro_path_length), 
                         panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
                 text_y += 20;
                 
-                draw_text_bitmap(&mut self.buffer, &format!("GyroPerc: {:.2}", features.gyro_path_perc), 
+                // Display averaged CLR values
+                draw_text_bitmap(&mut self.buffer, &format!("Avg CLR_Alpha: {}", features.clr_alpha), 
                         panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
                 text_y += 20;
-            }
-            
-            draw_text_bitmap(&mut self.buffer, &format!("CLR_Alpha: {}", features.clr_alpha), 
-                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
-            text_y += 20;
-            
-            draw_text_bitmap(&mut self.buffer, &format!("CLR_Gamma: {}", features.clr_gamma), 
-                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
-            text_y += 20;
-            
-            if let Some(pink) = features.gyro_path_pink {
-                draw_text_bitmap(&mut self.buffer, &format!("GyroPath_Pink: {}", pink), 
+                
+                draw_text_bitmap(&mut self.buffer, &format!("Avg CLR_Gamma: {}", features.clr_gamma), 
                         panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
                 text_y += 20;
+                
+                // Display individual CLR values if right spiral is shown
+                draw_text_bitmap(&mut self.buffer, &format!("Left CLR_Alpha: {}", features.left_clr_alpha), 
+                                panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+                text_y += 20;
+                
+                draw_text_bitmap(&mut self.buffer, &format!("Left CLR_Gamma: {}", features.left_clr_gamma), 
+                                panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+                text_y += 20;
+                
+                if self.show_right_spiral {
+                    draw_text_bitmap(&mut self.buffer, &format!("Right CLR_Alpha: {}", features.right_clr_alpha), 
+                                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+                    text_y += 20;
+                    
+                    draw_text_bitmap(&mut self.buffer, &format!("Right CLR_Gamma: {}", features.right_clr_gamma), 
+                                    panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+                    text_y += 20;
+                }
             }
         }
         
@@ -764,11 +1009,25 @@ impl GuiState {
                 panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
         
+        // Diego Path
+        draw_rect(&mut self.buffer, panel_x, text_y, color_box_size, color_box_size, 
+                 WINDOW_WIDTH, WINDOW_HEIGHT, COLOR_DIEGO_PATH);
+        draw_text_bitmap(&mut self.buffer, "Diego Path (Within Leaf)", 
+                panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
+        text_y += 20;
+        
         // Golden Path
         draw_rect(&mut self.buffer, panel_x, text_y, color_box_size, color_box_size, 
                  WINDOW_WIDTH, WINDOW_HEIGHT, COLOR_GOLDEN_PATH);
-        draw_text_bitmap(&mut self.buffer, "Golden Spiral Path", 
+        draw_text_bitmap(&mut self.buffer, "Left Golden Spiral Path", 
                 panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
+        text_y += 20;
+    
+        // Right Spiral Path
+        draw_rect(&mut self.buffer, panel_x, text_y, color_box_size, color_box_size, 
+            WINDOW_WIDTH, WINDOW_HEIGHT, COLOR_RIGHT_SPIRAL_PATH);
+        draw_text_bitmap(&mut self.buffer, "Right Spiral Path", 
+        panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
         
         // CLR Alpha
@@ -783,30 +1042,89 @@ impl GuiState {
                  WINDOW_WIDTH, WINDOW_HEIGHT, COLOR_CLR_GAMMA);
         draw_text_bitmap(&mut self.buffer, "CLR_Gamma (Non-Transparent)", 
                 panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
-        text_y += 25;
+        text_y += 20;
+        
+        // Right CLR Alpha (only show if right spiral is toggled)
+        if self.show_right_spiral {
+            draw_rect(&mut self.buffer, panel_x, text_y, color_box_size, color_box_size, 
+                    WINDOW_WIDTH, WINDOW_HEIGHT, 0xFF0000A0);
+            draw_text_bitmap(&mut self.buffer, "Right CLR_Alpha", 
+                    panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
+            text_y += 20;
+            
+            // Right CLR Gamma
+            draw_rect(&mut self.buffer, panel_x, text_y, color_box_size, color_box_size, 
+                    WINDOW_WIDTH, WINDOW_HEIGHT, 0xFF8000A0);
+            draw_text_bitmap(&mut self.buffer, "Right CLR_Gamma", 
+                    panel_x + color_box_size + color_text_gap, text_y, WINDOW_WIDTH, COLOR_TEXT);
+            text_y += 20;
+        }
+        
+        text_y += 5;
         
         // Controls
         draw_text_bitmap(&mut self.buffer, "Controls:", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
-        
+    
         draw_text_bitmap(&mut self.buffer, "- Click: Select contour point", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
-        
+    
+        draw_text_bitmap(&mut self.buffer, "- H/L: Previous/Next point", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+        text_y += 20;
+    
+        draw_text_bitmap(&mut self.buffer, "- R: Toggle right spiral path", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
+        text_y += 20;
+    
         draw_text_bitmap(&mut self.buffer, "- T: Toggle transparency view", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
-        
+    
         draw_text_bitmap(&mut self.buffer, "- C: Toggle CLR regions", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
         text_y += 20;
-        
+    
         draw_text_bitmap(&mut self.buffer, "- Esc: Exit", panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
-        text_y += 20;
+        // Don't increment text_y anymore since it's not used after this
         
         // Status message at bottom
         let status_y = WINDOW_HEIGHT - 20;
         draw_text_bitmap(&mut self.buffer, &self.status_message, panel_x, status_y, WINDOW_WIDTH, COLOR_TEXT);
     }
-}
 
+    fn handle_key_repeat(&mut self, key: Key, current_idx: Option<usize>, is_forward: bool) -> Result<()> {
+        let contour_len = self.lec_contour.len();
+        if contour_len == 0 {
+            return Ok(());
+        }
+        
+        let new_idx = if let Some(idx) = current_idx {
+            if is_forward {
+                // Next point
+                if idx < contour_len - 1 {
+                    idx + 1
+                } else {
+                    0 // Wrap to beginning
+                }
+            } else {
+                // Previous point
+                if idx > 0 {
+                    idx - 1
+                } else {
+                    contour_len - 1 // Wrap to end
+                }
+            }
+        } else if contour_len > 0 {
+            // No current selection, select first or last
+            if is_forward {
+                0
+            } else {
+                contour_len - 1
+            }
+        } else {
+            return Ok(());
+        };
+        
+        self.select_point(new_idx)
+    }
+}
 /// Draw a circle
 fn draw_circle(buffer: &mut [u32], center_x: usize, center_y: usize, radius: usize, 
                width: usize, height: usize, color: u32) {
@@ -892,8 +1210,11 @@ pub fn run_gui(image_path: PathBuf, config: Config) -> Result<()> {
     let input_image = load_image(&image_path)?;
     println!("Image loaded: {}x{}", input_image.image.width(), input_image.image.height());
     
-    // Create resized image if configured
-    let processed_image = if let Some(dimensions) = config.resize_dimensions {
+    // Create resized image for GUI mode if configured
+    let processed_image = if let Some(dimensions) = config.gui_resize_dimensions {
+        println!("Resizing image for GUI mode to {}x{}", dimensions[0], dimensions[1]);
+        resize_image(&input_image.image, dimensions)
+    } else if let Some(dimensions) = config.resize_dimensions {
         println!("Resizing image to {}x{}", dimensions[0], dimensions[1]);
         resize_image(&input_image.image, dimensions)
     } else {
@@ -965,7 +1286,10 @@ pub fn run_gui(image_path: PathBuf, config: Config) -> Result<()> {
         
         state.mouse_down = mouse_down_now;
         
-        // Handle keyboard input
+        // Handle keyboard input with improved key repeat
+        let now = Instant::now();
+        
+        // Handle single key presses without repeat
         if window.is_key_pressed(Key::T, minifb::KeyRepeat::No) {
             state.show_transparency = !state.show_transparency;
             state.status_message = format!("Transparency view: {}", 
@@ -977,6 +1301,130 @@ pub fn run_gui(image_path: PathBuf, config: Config) -> Result<()> {
             state.status_message = format!("CLR regions view: {}", 
                                          if state.show_clr_regions { "ON" } else { "OFF" });
         }
+    
+        if window.is_key_pressed(Key::R, minifb::KeyRepeat::No) {
+            state.show_right_spiral = !state.show_right_spiral;
+            state.status_message = format!("Right spiral path: {}", 
+                                       if state.show_right_spiral { "ON" } else { "OFF" });
+        }
+        
+        // Handle H and L keys with improved repeat logic
+        let handle_key_repeat = |key: Key, current_idx: Option<usize>, is_forward: bool| -> Result<()> {
+            let contour_len = state.lec_contour.len();
+            if contour_len == 0 {
+                return Ok(());
+            }
+            
+            let new_idx = if let Some(idx) = current_idx {
+                if is_forward {
+                    // Next point
+                    if idx < contour_len - 1 {
+                        idx + 1
+                    } else {
+                        0 // Wrap to beginning
+                    }
+                } else {
+                    // Previous point
+                    if idx > 0 {
+                        idx - 1
+                    } else {
+                        contour_len - 1 // Wrap to end
+                    }
+                }
+            } else if contour_len > 0 {
+                // No current selection, select first or last
+                if is_forward {
+                    0
+                } else {
+                    contour_len - 1
+                }
+            } else {
+                return Ok(());
+            };
+            
+            state.select_point(new_idx)
+        };
+        
+        // Check if H is pressed (previous point)
+        if window.is_key_down(Key::H) {
+            let should_process = if let Some(last_key) = state.last_key_pressed {
+                if last_key == Key::H {
+                    // Check if enough time has passed for key repeat
+                    if let Some(timer) = state.key_repeat_timer {
+                        let elapsed = now.duration_since(timer);
+                        // Initial delay, then faster repeat
+                        let delay = if state.key_repeat_count == 0 {
+                            Duration::from_millis(500) // Initial delay
+                        } else {
+                            Duration::from_millis(100) // Repeat delay
+                        };
+                        
+                        elapsed > delay
+                    } else {
+                        true
+                    }
+                } else {
+                    // New key pressed
+                    true
+                }
+            } else {
+                // No previous key
+                true
+            };
+            
+            if should_process {
+                if let Err(e) = state.handle_key_repeat(Key::H, state.selected_point_idx, false) {
+                    state.status_message = format!("Error selecting point: {}", e);
+                }
+                
+                state.key_repeat_timer = Some(now);
+                state.key_repeat_count += 1;
+                state.last_key_pressed = Some(Key::H);
+            }
+        }
+        // Check if L is pressed (next point)
+        else if window.is_key_down(Key::L) {
+            let should_process = if let Some(last_key) = state.last_key_pressed {
+                if last_key == Key::L {
+                    // Check if enough time has passed for key repeat
+                    if let Some(timer) = state.key_repeat_timer {
+                        let elapsed = now.duration_since(timer);
+                        // Initial delay, then faster repeat
+                        let delay = if state.key_repeat_count == 0 {
+                            Duration::from_millis(500) // Initial delay
+                        } else {
+                            Duration::from_millis(100) // Repeat delay
+                        };
+                        
+                        elapsed > delay
+                    } else {
+                        true
+                    }
+                } else {
+                    // New key pressed
+                    true
+                }
+            } else {
+                // No previous key
+                true
+            };
+            
+            if should_process {
+                if let Err(e) = state.handle_key_repeat(Key::L, state.selected_point_idx, true) {
+                    state.status_message = format!("Error selecting point: {}", e);
+                }
+                
+                state.key_repeat_timer = Some(now);
+                state.key_repeat_count += 1;
+                state.last_key_pressed = Some(Key::L);
+            }
+        }
+        else {
+            // No navigation keys pressed, reset state
+            state.key_repeat_timer = None;
+            state.key_repeat_count = 0;
+            state.last_key_pressed = None;
+        }
         
         // Update the buffer
         state.update_buffer();
@@ -986,7 +1434,6 @@ pub fn run_gui(image_path: PathBuf, config: Config) -> Result<()> {
             .update_with_buffer(&state.buffer, WINDOW_WIDTH, WINDOW_HEIGHT)
             .map_err(|e| LeafComplexError::Other(format!("Failed to update window: {}", e)))?;
     }
-    
     println!("GUI closed normally");
     Ok(())
 }
