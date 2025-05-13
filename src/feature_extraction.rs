@@ -23,16 +23,12 @@ pub struct MarginalPointFeatures {
     pub left_clr_gamma: u32,
     pub right_clr_alpha: u32,
     pub right_clr_gamma: u32,
-    pub gyro_path_pink: Option<u32>, // Average pink pixels
-    pub left_gyro_path_pink: Option<u32>, // Only for LEC (Pink as Opaque) - left path
-    pub right_gyro_path_pink: Option<u32>, // Only for LEC (Pink as Opaque) - right path
     
-    // New DiegoPath fields
+    // DiegoPath fields - keep these
     pub diego_path_length: f64,
     pub diego_path_perc: f64,
     pub diego_path_pink: Option<u32>, // Pink pixels along the diego path
 }
-
 /// Generate features for all marginal points
 pub fn generate_features(
     reference_point: (u32, u32),
@@ -81,10 +77,6 @@ pub fn generate_features(
         let mut left_clr_gamma = 0;
         let mut right_clr_alpha = 0;
         let mut right_clr_gamma = 0;
-        
-        let mut gyro_path_pink = if is_lec { Some(0) } else { None };
-        let mut left_gyro_path_pink = if is_lec { Some(0) } else { None };
-        let mut right_gyro_path_pink = if is_lec { Some(0) } else { None };
         
         // Calculate DiegoPath - the shortest path that stays within the leaf
         let diego_path = calculate_diego_path(reference_point, marginal_point, analysis_image);
@@ -180,43 +172,6 @@ pub fn generate_features(
                     clr_alpha = right_clr_alpha;
                     clr_gamma = right_clr_gamma;
                 }
-                
-                // For LEC, count pink pixels along the spiral path
-                if is_lec {
-                    if let Some(marked) = marked_image {
-                        // Calculate pink pixels for left spiral
-                        if left_spiral_valid {
-                            left_gyro_path_pink = Some(calculate_gyro_path_pink(
-                                &left_spiral_path,
-                                marked,
-                                marked_color,
-                            ));
-                        }
-                        
-                        // Calculate pink pixels for right spiral
-                        if right_spiral_valid {
-                            right_gyro_path_pink = Some(calculate_gyro_path_pink(
-                                &right_spiral_path,
-                                marked,
-                                marked_color,
-                            ));
-                        }
-                        
-                        // Calculate average pink pixel count
-                        if left_spiral_valid && right_spiral_valid {
-                            // Average both left and right values
-                            let left_pink = left_gyro_path_pink.unwrap_or(0);
-                            let right_pink = right_gyro_path_pink.unwrap_or(0);
-                            gyro_path_pink = Some(((left_pink as f64 + right_pink as f64) / 2.0).floor() as u32);
-                        } else if left_spiral_valid {
-                            // Use only left value
-                            gyro_path_pink = left_gyro_path_pink;
-                        } else if right_spiral_valid {
-                            // Use only right value
-                            gyro_path_pink = right_gyro_path_pink;
-                        }
-                    }
-                }
             }
         }
         
@@ -232,9 +187,6 @@ pub fn generate_features(
             left_clr_gamma,
             right_clr_alpha,
             right_clr_gamma,
-            gyro_path_pink,
-            left_gyro_path_pink,
-            right_gyro_path_pink,
             diego_path_length,
             diego_path_perc,
             diego_path_pink,

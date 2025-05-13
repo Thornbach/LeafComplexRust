@@ -15,7 +15,7 @@ use crate::path_algorithms::{
     calculate_straight_path_length, check_straight_line_transparency, 
     is_point_in_polygon, calculate_gyro_path_length,
     generate_left_right_spirals, calculate_clr_points, calculate_gyro_path_pink,
-    calculate_diego_path
+    calculate_diego_path, calculate_diego_path_length, calculate_diego_path_pink
 };
 use crate::point_analysis::get_reference_point;
 
@@ -42,6 +42,12 @@ const COLOR_CLR_GAMMA: u32 = 0x0000FF80;     // Blue (semi-transparent)
 // Default ranges
 const MIN_KERNEL_SIZE: u32 = 1;
 const MAX_KERNEL_SIZE: u32 = 50;
+
+//  ██████  ██    ██ ██     ███████ ████████ ██████  ██    ██  ██████ ████████ 
+// ██       ██    ██ ██     ██         ██    ██   ██ ██    ██ ██         ██    
+// ██   ███ ██    ██ ██     ███████    ██    ██████  ██    ██ ██         ██    
+// ██    ██ ██    ██ ██          ██    ██    ██   ██ ██    ██ ██         ██    
+//  ██████   ██████  ██     ███████    ██    ██   ██  ██████   ██████    ██    
 
 /// GUI Application State
 struct GuiState {
@@ -307,26 +313,6 @@ impl GuiState {
                         // Calculate averages
                         features.clr_alpha = ((left_alpha as f64 + right_alpha as f64) / 2.0).floor() as u32;
                         features.clr_gamma = ((left_gamma as f64 + right_gamma as f64) / 2.0).floor() as u32;
-                        
-                        // Calculate pink pixels for both paths
-                        if let Some(marked) = marked_image {
-                            let left_pink = calculate_gyro_path_pink(
-                                &self.left_spiral_path, 
-                                marked, 
-                                self.config.marked_region_color_rgb
-                            );
-                            
-                            let right_pink = calculate_gyro_path_pink(
-                                &self.right_spiral_path, 
-                                marked, 
-                                self.config.marked_region_color_rgb
-                            );
-                            
-                            // Store individual and averaged values
-                            features.left_gyro_path_pink = Some(left_pink);
-                            features.right_gyro_path_pink = Some(right_pink);
-                            features.gyro_path_pink = Some(((left_pink as f64 + right_pink as f64) / 2.0).floor() as u32);
-                        }
                     }
                     
                     // Calculate the actual golden path length using the arc length formula
@@ -358,9 +344,6 @@ impl GuiState {
                         features.left_clr_gamma = 0;
                         features.right_clr_alpha = 0;
                         features.right_clr_gamma = 0;
-                        features.gyro_path_pink = None;
-                        features.left_gyro_path_pink = None;
-                        features.right_gyro_path_pink = None;
                     }
                     
                     // Also clear CLR regions
@@ -368,6 +351,25 @@ impl GuiState {
                     self.clr_gamma_pixels.clear();
                     self.right_clr_alpha_pixels.clear();
                     self.right_clr_gamma_pixels.clear();
+                }
+                
+                // Calculate DiegoPath length and percentage, updating the selected features
+                if !self.diego_path.is_empty() {
+                    if let Some(features) = &mut self.selected_features {
+                        let straight_path_length = calculate_straight_path_length(
+                            self.reference_point.unwrap_or((0, 0)),
+                            self.lec_contour[self.selected_point_idx.unwrap_or(0)]
+                        );
+                        features.diego_path_length = calculate_diego_path_length(&self.diego_path);
+                        features.diego_path_perc = (features.diego_path_length / straight_path_length) * 100.0;
+                        
+                        // Calculate DiegoPath pink if in LEC mode
+                        features.diego_path_pink = Some(calculate_diego_path_pink(
+                            &self.diego_path, 
+                            marked, 
+                            self.config.marked_region_color_rgb
+                        ));
+                    }
                 }
                                 
                 println!("Point selection complete");
@@ -605,6 +607,15 @@ impl GuiState {
                     self.right_clr_alpha_pixels.len(), self.right_clr_gamma_pixels.len());
         }
     }
+
+
+    // ██████  ██    ██ ███████ ███████ ███████ ██████  
+    // ██   ██ ██    ██ ██      ██      ██      ██   ██ 
+    // ██████  ██    ██ █████   █████   █████   ██████  
+    // ██   ██ ██    ██ ██      ██      ██      ██   ██ 
+    // ██████   ██████  ██      ██      ███████ ██   ██ 
+                                                     
+                                                    
     
     /// Update the buffer for display
     fn update_buffer(&mut self) {
@@ -891,6 +902,12 @@ impl GuiState {
         
         text_y += 30;
         
+        // ██      ███████  ██████  ███████ ███    ██ ██████  
+        // ██      ██      ██       ██      ████   ██ ██   ██ 
+        // ██      █████   ██   ███ █████   ██ ██  ██ ██   ██ 
+        // ██      ██      ██    ██ ██      ██  ██ ██ ██   ██ 
+        // ███████ ███████  ██████  ███████ ██   ████ ██████  
+
         // Reference point
         if let Some(point) = self.reference_point {
             draw_text_bitmap(&mut self.buffer, &format!("Reference Point: ({}, {})", point.0, point.1), 
@@ -906,7 +923,6 @@ impl GuiState {
             text_y += 20;
         }
         
-        // Selected point info
         if let (Some(idx), Some(features)) = (self.selected_point_idx, &self.selected_features) {
             let point = self.lec_contour[idx];
             
@@ -922,7 +938,7 @@ impl GuiState {
                     panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
             text_y += 20;
             
-            // Always show DiegoPath info
+            // Always show DiegoPath info - this was missing/incomplete before
             draw_text_bitmap(&mut self.buffer, &format!("DiegoPath: {:.2}", features.diego_path_length), 
                     panel_x, text_y, WINDOW_WIDTH, COLOR_TEXT);
             text_y += 20;
@@ -1145,6 +1161,13 @@ fn draw_circle(buffer: &mut [u32], center_x: usize, center_y: usize, radius: usi
         }
     }
 }
+
+// ██████  ██████   █████  ██     ██ 
+// ██   ██ ██   ██ ██   ██ ██     ██ 
+// ██   ██ ██████  ███████ ██  █  ██ 
+// ██   ██ ██   ██ ██   ██ ██ ███ ██ 
+// ██████  ██   ██ ██   ██  ███ ███  
+                                 
 
 /// Draw a rectangle
 fn draw_rect(buffer: &mut [u32], x: usize, y: usize, width_px: usize, height_px: usize,

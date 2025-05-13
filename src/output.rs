@@ -22,7 +22,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header
+    // Write header - removed GyroPath_Pink
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -30,7 +30,9 @@ pub fn write_lec_csv<P: AsRef<Path>>(
         "GyroPath_Perc",
         "CLR_Alpha",
         "CLR_Gamma",
-        "GyroPath_Pink",
+        "DiegoPath_Length",
+        "DiegoPath_Perc",
+        "DiegoPath_Pink",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
@@ -42,7 +44,9 @@ pub fn write_lec_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.gyro_path_perc),
             feature.clr_alpha.to_string(),
             feature.clr_gamma.to_string(),
-            feature.gyro_path_pink.unwrap_or(0).to_string(),
+            format!("{:.6}", feature.diego_path_length),
+            format!("{:.6}", feature.diego_path_perc),
+            feature.diego_path_pink.unwrap_or(0).to_string(),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
@@ -69,7 +73,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header
+    // Write header - add DiegoPath fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -77,6 +81,8 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
         "GyroPath_Perc",
         "CLR_Alpha",
         "CLR_Gamma",
+        "DiegoPath_Length",
+        "DiegoPath_Perc",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
@@ -88,6 +94,8 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.gyro_path_perc),
             feature.clr_alpha.to_string(),
             feature.clr_gamma.to_string(),
+            format!("{:.6}", feature.diego_path_length),
+            format!("{:.6}", feature.diego_path_perc),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
