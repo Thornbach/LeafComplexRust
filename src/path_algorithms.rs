@@ -1,7 +1,7 @@
 use std::collections::{VecDeque, HashSet};
 use image::RgbaImage;
 use bresenham::Bresenham;
-use crate::image_utils::is_non_transparent;
+use crate::image_utils::{is_non_transparent, has_rgb_color};
 
 /// Constant for the golden ratio
 pub const PHI: f64 = 1.618033988749895; // (1.0 + 5.0_f64.sqrt()) / 2.0
@@ -233,38 +233,6 @@ pub fn generate_left_right_spirals(
     (left_path, right_path)
 }
 
-// ██████  ██    ██ ██████   ██████      ███████ ███████ ██████  ██████  ███████ ██      ██ 
-// ██        ██  ██  ██   ██ ██    ██        ███  ██      ██   ██ ██   ██ ██      ██      ██ 
-// ██   ███   ████   ██████  ██    ██       ███   █████   ██████  ██████  █████   ██      ██ 
-// ██    ██    ██    ██   ██ ██    ██      ███    ██      ██      ██      ██      ██      ██ 
-//  ██████     ██    ██   ██  ██████      ███████ ███████ ██      ██      ███████ ███████ ██ 
-                                                                                        
-
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣶⣎⠭⠭⠦⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣠⠴⠚⣩⠔⣋⣥⠶⠀⠀⠀⣄⠉⠓⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⢀⡠⠴⠊⠁⠀⢸⠟⣡⠾⠋⠀⣠⡶⠀⠀⢻⣇⣀⣿⡤⠤⠤⣤⣄⣤⣤⠔⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣤
-// ⠀⠀⠀⠀⠀⠀⣠⢞⡭⠀⢠⣶⡀⢠⠏⡼⠋⢀⣤⡿⠋⢀⣾⢀⣾⣋⣿⠿⠒⠚⠛⠋⠉⠉⠁⠀⣀⣀⣠⣤⣶⣶⣶⣾⣿⣿⣿⣿⣿⣿
-// ⠀⠀⠀⠀⠀⣾⣴⣏⠀⠀⠈⠻⣷⡼⠀⠀⠰⠟⠁⠀⣰⠿⣣⣾⣧⣴⡿⠶⠆⢀⣠⣤⢶⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣿⣿⣿⣿
-// ⠀⠀⠀⠀⡴⠛⠉⢹⣧⠀⠀⠀⢈⣿⣄⠀⠀⢠⠴⢛⡡⠞⢉⡩⠟⠀⣠⣴⡾⠋⠉⠀⠈⣿⣿⣽⣿⣿⣿⣿⣛⣛⠿⢿⣿⣿⣿⣿⡿⠁
-// ⠀⠀⠀⠀⡷⠒⠉⠉⠉⠁⠲⡖⠉⣿⣿⣷⣤⣴⣮⣭⠴⠒⢉⣤⡶⠛⠉⠀⣿⣴⣦⣄⠀⠻⣿⣿⣿⡿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠀⠀
-// ⠀⠀⢀⡞⣡⡶⠀⠀⠒⢦⡀⠱⣤⣿⣿⠟⠿⠿⠏⠀⣠⣴⣿⣥⣤⣤⣤⣴⠟⣷⠈⠙⠳⣄⠀⠐⢽⡻⢷⣮⣽⣿⣿⣿⣿⣟⠁⣀⣀⠀
-// ⠀⠀⣾⣾⢋⣴⡶⠂⠀⢸⡗⢳⡿⣯⠀⠀⠀⢀⣴⣞⣻⣿⡿⢚⡿⠿⣿⣯⣀⠙⢶⣖⣒⠚⠀⢠⣄⠈⢦⠈⠙⠻⣿⡟⠁⠈⠉⢀⣼⠤
-// ⠀⠀⢿⠃⣼⠟⢀⣼⡇⣾⢃⣾⠁⠿⢃⠖⣠⡿⢿⣾⠟⢹⣧⣬⣽⡿⣫⠿⠯⢷⡈⠛⠛⡃⠀⣷⡈⣦⡈⡇⠀⠀⠈⢳⣄⡀⠀⠀⠀⠀
-// ⠀⠀⠈⢾⣏⢀⣼⣋⡴⢛⡿⠁⢀⠞⣡⣾⣿⡀⠀⠑⠒⠀⠀⠀⠉⠋⠀⠀⠀⠀⠹⡀⠀⠹⡔⠻⣿⡏⠁⣹⣄⠀⠀⠀⠙⢿⠒⠤⣀⠀
-// ⠀⠀⠀⠀⠈⠙⠛⠣⣶⡟⠁⡰⢃⡴⠿⣛⣿⣷⣤⠶⠦⠤⡀⠀⠀⠀⠀⠀⠀⠀⠀⣇⢠⡤⢧⢠⠟⢀⡰⠃⠘⠢⡀⠀⢱⡈⠆⢢⠀⠙
-// ⠀⠀⠀⠀⠀⠀⠀⣰⣿⢀⠞⣡⣿⣀⣴⢿⣽⣿⡇⠀⠀⢀⣸⡀⠀⠀⠀⠀⠀⠀⠀⠘⠀⢇⠘⣿⣶⡏⠀⠀⢤⡀⠈⢢⠀⢷⡘⠈⡄⠀
-// ⠀⠀⠀⠀⠀⠀⣴⠉⣩⢃⣼⡇⠈⢩⠁⠈⠻⡼⣧⣄⠀⢀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⢻⠉⡇⠀⠀⢠⢹⡦⡀⢣⠘⣇⠸⠇⠀
-// ⠀⠀⠀⠀⠀⣰⢃⡜⢡⡞⠋⠻⣾⣏⠀⠀⠀⢿⣄⣨⡽⠿⢻⠿⠿⢷⣦⠀⠀⠀⠀⠀⠀⣠⣄⡸⠀⣿⣦⣄⠀⠳⣵⡌⠢⡇⢸⠁⠀⠀
-// ⠀⠀⠀⠀⣰⣣⠋⣰⣿⡇⠀⢀⠨⢿⣄⠀⠀⠀⠉⢟⢶⣖⠋⣀⡤⠖⠋⠀⡀⠀⠀⠀⠰⡇⢸⠇⠀⣿⣿⣿⣦⡀⠙⣿⡄⢹⠸⡇⠀⠀
-// ⠀⠀⠀⣼⡿⢁⣾⠯⣿⣧⣠⡸⣄⠀⠻⡆⠀⠀⠀⠈⠃⠛⠛⠉⠀⠀⣀⣼⠇⠀⠀⠀⠀⢹⠏⠀⢠⣿⣿⣿⣿⣿⣄⠈⢧⢸⣾⡇⠀⠀
-// ⠀⢀⡼⠋⣠⣿⣿⡄⣿⣿⣿⡄⠈⢻⡗⣻⣶⣄⠀⠀⠀⢰⣤⣴⠾⠛⠉⠁⠀⢠⡒⠉⢷⡿⠀⠀⣼⣯⣟⢿⣿⣿⣿⣷⣼⣿⣿⠀⠀⢀
-// ⢀⠞⢁⣼⣿⣿⣿⣣⣿⣿⣿⣇⠀⠀⡟⢻⣿⣿⣷⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢣⣴⢻⠃⠀⢀⣿⣿⣿⣧⠉⢻⣿⣿⣿⠃⠁⠀⢀⣌
-// ⠏⣠⣿⣯⣿⣿⣿⣿⣿⣿⣿⣿⡀⠀⣇⢸⢿⣿⣿⣿⣷⣤⡒⢆⠀⠀⢀⣠⣴⣾⡿⢁⡎⠀⠀⣼⠿⣿⣿⣿⣇⢸⣿⣿⡇⠀⠀⢠⡿⠃
-// ⣾⣿⠿⠟⣛⣿⣿⣿⣿⣿⣿⣿⣇⠀⢻⣾⢸⡘⣿⣿⣿⣿⣿⣬⣷⣾⣿⣿⣿⠟⠀⠈⠀⠀⢠⡿⠀⢻⣿⣟⣿⢸⣿⣿⠃⠀⣰⡿⠁⠀
-// ⠀⣠⠴⠿⠿⠿⠿⠿⣿⣿⣿⣿⣿⡄⠈⣿⡀⢷⣿⣿⡟⣿⣿⣿⣧⣿⣿⡿⠋⠀⠀⠀⠀⢠⣿⡇⢠⣿⢟⣾⠟⣸⣿⡿⢀⣼⡿⠃⠀⠀
-// ⠉⠀⠀⠉⣉⠽⠋⠉⢀⡤⢈⠏⢻⣧⠀⢹⣇⠘⣿⣿⣷⣏⡿⣿⣸⣿⡿⠁⠀⠀⠀⠀⢠⡿⢻⣥⣿⣿⣿⡟⢰⣿⡟⢡⡾⡽⠁⠀⠀⠐
-// ⠙⢿⣿⣞⠙⢷⣶⣿⡿⠖⠉⢀⡄⠹⡄⠈⢟⡆⢸⣟⢿⣿⣿⣿⣿⣽⣇⠀⠀⠀⠀⠀⠘⠃⣾⣷⣿⣿⡟⢠⡿⠋⡰⢋⡞⢁⡠⠂⢈⡆
-
 /// Generate a full golden spiral for visualization
 pub fn generate_full_spiral(
     center: (u32, u32),
@@ -295,8 +263,6 @@ pub fn generate_full_spiral(
     
     spiral
 }
-
-
 
 /// Check if a Golden Spiral path is valid (all points are non-transparent)
 pub fn check_spiral_path_validity(
@@ -536,42 +502,8 @@ pub fn is_point_in_polygon(px: f32, py: f32, polygon: &[(u32, u32)]) -> bool {
     inside
 }
 
-// ██████  ██  ██████      ██████  ██████   █████  ███    ██ ██████   ██████  
-// ██   ██ ██ ██    ██     ██   ██ ██   ██ ██   ██ ████   ██ ██   ██ ██    ██ 
-// ██   ██ ██ ██    ██     ██████  ██████  ███████ ██ ██  ██ ██   ██ ██    ██ 
-// ██   ██ ██ ██    ██     ██   ██ ██   ██ ██   ██ ██  ██ ██ ██   ██ ██    ██ 
-// ██████  ██  ██████      ██████  ██   ██ ██   ██ ██   ████ ██████   ██████  
-                                                                       
-
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⢹⡀⠀⠀⠀⠀⠀⠘⠀⣷⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⡀⠀⠀⠀⠙⢦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⡼⠃⠀⠀⠀⠀⠀⣤⠀⢏⠀⠀⠀⠀⢠⣠⡆⠀⠀⣦⡀⠀⠳⡀⠀⠀⠀⠀⠑⢄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠐⣇⡀⠀⠀⠀⠀⠀⠘⠂⢈⣦⠀⣀⡀⠈⣟⢷⣄⠀⠘⣷⣄⠀⠹⣆⠀⠀⠀⠀⠀⠙⢦⣀⠀⠀⠀⠀⠀⠀⠀⢤
-// ⠀⠀⠀⠀⠐⣶⠦⠤⠴⠋⠁⠀⠀⠀⠀⡜⢷⣧⣸⣿⡀⡟⠹⡄⢹⠀⣹⣷⣤⡘⣄⠙⠲⢬⣿⣉⡉⠉⠉⠉⠉⢉⣥⣀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠈⠳⠤⢤⡀⠀⠀⠀⠀⠀⢹⡾⣿⠛⠉⣧⡇⠀⢱⣸⡔⢡⠏⠀⠉⢻⣦⣤⠀⠈⠹⣿⣂⡀⣠⠔⢉⡤⠾⡆⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⢀⡞⣧⠀⠀⢠⠈⣇⢀⣿⠃⠀⠀⠸⣿⣠⣼⣟⣠⣯⣴⡿⠷⣿⠟⠁⠀⠀⠀⠀⠀⣇⡇⠀⡿⠦⡀⣇⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⣾⡼⡇⠀⠀⠘⡇⣿⣿⣿⢦⣄⣧⠀⣯⣿⣼⣿⣿⠋⢿⣽⣶⡏⠀⠀⠀⠀⠀⠀⠀⢻⠇⢀⡇⣠⠇⢸⡄⠀⠀⠀⣠
-// ⠀⠀⠀⠀⠀⠀⠀⠙⠓⠳⣤⣶⠀⣿⠛⣿⢻⣷⣮⣽⡆⠈⠿⠟⠻⠛⠉⠉⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⠘⢿⠃⠀⣼⠁⠀⠀⠀⡱
-// ⠀⠀⠀⠀⠀⠀⠀⢀⣠⡴⣺⣿⢠⣍⡀⠘⡿⢿⡿⠿⣷⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⡈⢀⡾⠃⠀⠀⠀⠘⢄
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠁⢸⡟⣾⡷⣄⢹⠀⠀⠀⣿⠁⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡏⡏⠉⠀⠀⠀⠀⠀⡐⠪
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠃⠈⠃⠀⠙⣇⠀⠀⠙⠦⠉⠉⠁⠀⠀⠀⠀⠀⢠⡆⠀⠀⠀⠀⠀⠀⠀⢸⠃⠹⡄⠀⠀⠀⠀⠀⠠⡀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⣆⠀⠀⢠⣤⣤⡤⢒⣊⣩⣽⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⢸⡄⠀⠙⣿⠀⡄⠀⠀⠀⠙
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢦⠀⠈⠹⣶⠛⣩⠔⠋⠉⠁⣸⠀⠀⠀⠀⠀⠀⠀⣠⢞⡁⠀⠀⡞⣸⠃⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠳⣄⠀⠈⣿⣇⣀⣀⣀⢴⡿⠀⠀⠀⠀⠀⣠⠞⠁⣸⠀⢀⡼⠟⠹⡀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⡄⠙⠲⠤⠥⢖⡋⠀⠀⠀⠀⡠⠊⠁⠀⢠⠇⠀⠀⠀⠀⠀⢹⣉⡉⢰⡎
-// ⠀⣀⣤⠖⠒⢲⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⣆⠀⠛⠋⠉⠀⠀⢀⡤⠊⠀⠀⠀⠀⠞⠀⠀⠀⠀⠀⠀⠀⢳⡼⠋⠀
-// ⠋⡝⠁⠀⠀⠀⢱⡀⢀⡴⠊⠉⠉⠙⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⢘⣄⣀⣀⣀⡤⠖⠋⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⠤⠤⠖⠊⢁⡠⠖⠋
-// ⠉⠉⠉⠉⠙⡆⠀⢷⠋⠀⠀⢀⡴⠚⠁⠀⠀⠀⠀⠀⠀⣠⠴⣚⠭⠜⠛⢯⠀⡇⠀⠀⣀⣀⠤⠄⠒⠒⠉⠉⠀⣀⣀⠤⠔⠊⠁⠀⠀⠀
-// ⠳⠄⠀⠀⠀⡇⢀⡼⢦⡀⣰⠋⠀⠀⠀⠀⠀⠀⠀⠀⢸⣏⣛⠓⠤⠤⡀⠘⡆⢇⣠⠞⢁⣠⠤⠤⠖⠒⠒⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠈⠀⠀⠀⡟⠋⠀⠀⣹⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⡈⠉⠙⠢⡝⡄⠳⡼⠃⡴⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⢀⠀⢀⡴⠃⠀⠀⡸⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⠇⠀⠀⠀⠙⢸⡞⢠⠞⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⣻⠒⠋⠀⠀⠀⡰⠃⠀⠀⠀⠀⠀⠀⠀⣀⣀⠠⠤⠤⠼⡀⠀⠀⠀⠀⡞⢠⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠘⠁⠀⠀⠀⠀⡰⠁⠀⠀⢀⣠⠄⠒⠊⠉⠀⠀⠀⠀⠀⠀⠈⢢⡀⠀⢰⢡⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⠀⠀⢀⣼⣁⠤⠖⠊⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣽⣴⡾⠟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-// ⠀⠀⢀⣠⠞⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣼⡟⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-
-
-
-
+/// Find the shortest path that stays within the leaf boundary (never crosses transparent pixels)
+/// Uses a breadth-first search algorithm to find the shortest path
 /// Find the shortest path that stays within the leaf boundary (never crosses transparent pixels)
 /// Uses a breadth-first search algorithm to find the shortest path
 pub fn calculate_diego_path(
@@ -579,7 +511,23 @@ pub fn calculate_diego_path(
     margin_point: (u32, u32),
     image: &RgbaImage
 ) -> Vec<(u32, u32)> {
+    // First, check if the straight line path crosses transparency
+    let straight_line = trace_straight_line(reference_point, margin_point);
+    
+    // If straight line doesn't cross transparency, use it
+    if !check_straight_line_transparency(&straight_line, image) {
+        println!("Using straight line for DiegoPath (no transparency crossed)");
+        return straight_line;
+    }
+    
+    println!("Straight line crosses transparency, calculating BFS path");
+    
     let (width, height) = image.dimensions();
+    
+    // If points are the same, return just that point
+    if reference_point == margin_point {
+        return vec![reference_point];
+    }
     
     // Using BFS to find the shortest path
     let mut queue = VecDeque::new();
@@ -590,9 +538,9 @@ pub fn calculate_diego_path(
     queue.push_back(reference_point);
     visited.insert(reference_point);
     
-    // The four cardinal directions plus diagonals for movement
+    // The eight directions for movement (including diagonals for a better path)
     let directions = [
-        (0, 1), (1, 0), (0, -1), (-1, 0),  // Cardinal
+        (0, 1), (1, 0), (0, -1), (-1, 0),  // Cardinal (NSEW)
         (1, 1), (1, -1), (-1, 1), (-1, -1) // Diagonal
     ];
     
@@ -626,7 +574,7 @@ pub fn calculate_diego_path(
             
             // Check if the pixel is non-transparent (within leaf)
             let pixel = image.get_pixel(new_pos.0, new_pos.1);
-            if !is_non_transparent(&pixel) {
+            if pixel[3] == 0 {
                 continue;
             }
             
@@ -637,9 +585,10 @@ pub fn calculate_diego_path(
         }
     }
     
-    // If we didn't find a path, return an empty vector
+    // If we didn't find a path, return the straight line path as fallback
     if !found {
-        return Vec::new();
+        println!("DiegoPath not found, using straight line path as fallback");
+        return straight_line;
     }
     
     // Reconstruct the path
@@ -652,7 +601,14 @@ pub fn calculate_diego_path(
         
         match previous[current.0 as usize][current.1 as usize] {
             Some(prev) => current = prev,
-            None => break // This shouldn't happen if a path was found
+            None => {
+                // This shouldn't happen if a path was found, but if it does
+                // return what we have so far plus the reference point
+                println!("Error in DiegoPath reconstruction - missing previous node");
+                path.push(reference_point);
+                path.reverse();
+                return path;
+            }
         }
     }
     
@@ -700,4 +656,124 @@ pub fn calculate_diego_path_pink(
     }
     
     pink_count
+}
+
+/// Calculate CLR regions (moved from GUI to here)
+pub fn calculate_clr_regions(
+    ref_point: (u32, u32),
+    margin_point: (u32, u32),
+    spiral_path: &[(u32, u32)],
+    right_spiral_path: Option<&[(u32, u32)]>,
+    image: &RgbaImage,
+) -> (Vec<(u32, u32)>, Vec<(u32, u32)>, Vec<(u32, u32)>, Vec<(u32, u32)>) {
+    println!("Calculating CLR regions");
+    let mut clr_alpha_pixels = Vec::new();
+    let mut clr_gamma_pixels = Vec::new();
+    let mut right_clr_alpha_pixels = Vec::new();
+    let mut right_clr_gamma_pixels = Vec::new();
+    
+    // Create polygon from straight line and spiral path
+    let mut polygon = Vec::new();
+    let straight_line = trace_straight_line(ref_point, margin_point);
+    polygon.extend_from_slice(&straight_line);
+    
+    // Reverse spiral path for proper polygon formation
+    let mut spiral_path_rev = spiral_path.to_vec();
+    spiral_path_rev.reverse();
+    polygon.extend_from_slice(&spiral_path_rev);
+    
+    // Calculate bounding box (with padding)
+    let padding = 10;
+    let min_x = ref_point.0.min(margin_point.0).saturating_sub(padding);
+    let max_x = ref_point.0.max(margin_point.0) + padding;
+    let min_y = ref_point.1.min(margin_point.1).saturating_sub(padding);
+    let max_y = ref_point.1.max(margin_point.1) + padding;
+    
+    // Expand bounding box to include spiral path
+    let expanded_bbox = spiral_path.iter().fold((min_x, min_y, max_x, max_y), |acc, &(x, y)| {
+        (acc.0.min(x), acc.1.min(y), acc.2.max(x), acc.3.max(y))
+    });
+    
+    let (bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y) = expanded_bbox;
+    
+    // Count pixels in each category
+    let width = image.width();
+    let height = image.height();
+    
+    for y in bbox_min_y..=bbox_max_y {
+        if y >= height {
+            continue;
+        }
+        
+        for x in bbox_min_x..=bbox_max_x {
+            if x >= width {
+                continue;
+            }
+            
+            // Check if the point is inside the polygon
+            if is_point_in_polygon(x as f32, y as f32, &polygon) {
+                let pixel = image.get_pixel(x, y);
+                
+                // Check if transparent
+                if pixel[3] == 0 {
+                    clr_alpha_pixels.push((x, y));
+                } else {
+                    clr_gamma_pixels.push((x, y));
+                }
+            }
+        }
+    }
+    
+    // Also calculate for right spiral if provided
+    if let Some(right_path) = right_spiral_path {
+        // Similar process for right spiral
+        let mut right_polygon = Vec::new();
+        right_polygon.extend_from_slice(&straight_line);
+        
+        let mut right_path_rev = right_path.to_vec();
+        right_path_rev.reverse();
+        right_polygon.extend_from_slice(&right_path_rev);
+        
+        // Use the same bounding box expanded to include right spiral path
+        let right_expanded_bbox = right_path.iter().fold(
+            (bbox_min_x, bbox_min_y, bbox_max_x, bbox_max_y), 
+            |acc, &(x, y)| {
+                (acc.0.min(x), acc.1.min(y), acc.2.max(x), acc.3.max(y))
+            }
+        );
+        
+        let (r_bbox_min_x, r_bbox_min_y, r_bbox_max_x, r_bbox_max_y) = right_expanded_bbox;
+        
+        for y in r_bbox_min_y..=r_bbox_max_y {
+            if y >= height {
+                continue;
+            }
+            
+            for x in r_bbox_min_x..=r_bbox_max_x {
+                if x >= width {
+                    continue;
+                }
+                
+                if is_point_in_polygon(x as f32, y as f32, &right_polygon) {
+                    let pixel = image.get_pixel(x, y);
+                    
+                    if pixel[3] == 0 {
+                        right_clr_alpha_pixels.push((x, y));
+                    } else {
+                        right_clr_gamma_pixels.push((x, y));
+                    }
+                }
+            }
+        }
+    }
+    
+    println!("CLR_Alpha: {}, CLR_Gamma: {}", 
+            clr_alpha_pixels.len(), clr_gamma_pixels.len());
+            
+    if !right_clr_alpha_pixels.is_empty() {
+        println!("Right CLR_Alpha: {}, Right CLR_Gamma: {}", 
+                right_clr_alpha_pixels.len(), right_clr_gamma_pixels.len());
+    }
+    
+    (clr_alpha_pixels, clr_gamma_pixels, right_clr_alpha_pixels, right_clr_gamma_pixels)
 }

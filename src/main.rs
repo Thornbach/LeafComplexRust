@@ -8,8 +8,7 @@ mod output;
 mod path_algorithms;
 mod pipeline;
 mod point_analysis;
-mod font; 
-mod gui; // GUI module
+mod gui;
 
 
 use std::path::PathBuf;
@@ -22,6 +21,7 @@ use config::Config;
 use errors::{LeafComplexError, Result};
 use image_io::{get_png_files_in_dir, load_image};
 use pipeline::process_image;
+
 
 /// Command-line arguments
 #[derive(Parser, Debug)]

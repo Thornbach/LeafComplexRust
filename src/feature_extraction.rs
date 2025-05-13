@@ -4,11 +4,9 @@ use crate::errors::{LeafComplexError, Result};
 use crate::path_algorithms::{
     calculate_golden_spiral_params, calculate_gyro_path_length, calculate_straight_path_length,
     calculate_clr_points, check_spiral_path_validity, check_straight_line_transparency,
-    generate_golden_spiral_path, trace_straight_line, calculate_gyro_path_pink,
-    generate_left_right_spirals, calculate_diego_path, calculate_diego_path_length,
-    calculate_diego_path_pink,
+    generate_left_right_spirals, trace_straight_line, calculate_diego_path, 
+    calculate_diego_path_length, calculate_diego_path_pink,
 };
-
 
 #[derive(Debug, Clone)]
 pub struct MarginalPointFeatures {
@@ -24,11 +22,12 @@ pub struct MarginalPointFeatures {
     pub right_clr_alpha: u32,
     pub right_clr_gamma: u32,
     
-    // DiegoPath fields - keep these
+    // DiegoPath fields
     pub diego_path_length: f64,
     pub diego_path_perc: f64,
     pub diego_path_pink: Option<u32>, // Pink pixels along the diego path
 }
+
 /// Generate features for all marginal points
 pub fn generate_features(
     reference_point: (u32, u32),
@@ -79,7 +78,13 @@ pub fn generate_features(
         let mut right_clr_gamma = 0;
         
         // Calculate DiegoPath - the shortest path that stays within the leaf
-        let diego_path = calculate_diego_path(reference_point, marginal_point, analysis_image);
+        // If straight line doesn't cross transparency, use it as the DiegoPath
+        let diego_path = if crosses_transparency {
+            calculate_diego_path(reference_point, marginal_point, analysis_image)
+        } else {
+            straight_line.clone()
+        };
+        
         let diego_path_length = calculate_diego_path_length(&diego_path);
         let diego_path_perc = if straight_path_length > 0.0 {
             (diego_path_length / straight_path_length) * 100.0
@@ -105,7 +110,7 @@ pub fn generate_features(
                 calculate_golden_spiral_params(straight_path_length, phi_exponent_factor);
             
             // Generate both left and right spiral paths
-            let (left_spiral_path, right_spiral_path) = generate_left_right_spirals(
+            let (left_path, right_path) = generate_left_right_spirals(
                 reference_point,
                 marginal_point,
                 spiral_a_coeff,
@@ -115,10 +120,10 @@ pub fn generate_features(
             );
             
             // Check if left spiral path is valid
-            let left_spiral_valid = check_spiral_path_validity(&left_spiral_path, analysis_image);
+            let left_spiral_valid = check_spiral_path_validity(&left_path, analysis_image);
             
             // Check if right spiral path is valid
-            let right_spiral_valid = check_spiral_path_validity(&right_spiral_path, analysis_image);
+            let right_spiral_valid = check_spiral_path_validity(&right_path, analysis_image);
             
             // Process the spiral paths if at least one is valid
             if left_spiral_valid || right_spiral_valid {
@@ -137,7 +142,7 @@ pub fn generate_features(
                     let (alpha, gamma) = calculate_clr_points(
                         reference_point,
                         marginal_point,
-                        &left_spiral_path,
+                        &left_path,
                         analysis_image,
                     );
                     
@@ -150,7 +155,7 @@ pub fn generate_features(
                     let (alpha, gamma) = calculate_clr_points(
                         reference_point,
                         marginal_point,
-                        &right_spiral_path,
+                        &right_path,
                         analysis_image,
                     );
                     

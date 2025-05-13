@@ -8,6 +8,7 @@ use crate::image_utils::resize_image;
 use crate::morphology::{apply_opening, mark_opened_regions, trace_contour};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
+use crate::path_algorithms::calculate_clr_regions;
 
 /// Process a single image
 pub fn process_image(
@@ -106,6 +107,23 @@ pub fn process_image(
     // Debug output
     if debug {
         println!("LMC contour points: {}", lmc_contour.len());
+        
+        // Calculate and display CLR regions for debugging
+        // Select a sample point (first point in contour) for demonstration
+        if !lec_contour.is_empty() {
+            let sample_point = lec_contour[0];
+            
+            // Calculate spiral paths and CLR regions
+            let features = &lec_features[0];
+            if features.gyro_path_length > 0.0 {
+                // Assuming left spiral path would need to be recalculated here...
+                // This is simplified for debugging only
+                println!("Sample point CLR regions:");
+                println!("Left CLR Alpha: {}, Gamma: {}", features.left_clr_alpha, features.left_clr_gamma);
+                println!("Right CLR Alpha: {}, Gamma: {}", features.right_clr_alpha, features.right_clr_gamma);
+                println!("Avg CLR Alpha: {}, Gamma: {}", features.clr_alpha, features.clr_gamma);
+            }
+        }
     }
     
     // Step 6: Write output CSVs

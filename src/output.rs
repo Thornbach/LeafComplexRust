@@ -22,7 +22,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - removed GyroPath_Pink
+    // Write header - include DiegoPath fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -30,6 +30,10 @@ pub fn write_lec_csv<P: AsRef<Path>>(
         "GyroPath_Perc",
         "CLR_Alpha",
         "CLR_Gamma",
+        "Left_CLR_Alpha",
+        "Left_CLR_Gamma",
+        "Right_CLR_Alpha",
+        "Right_CLR_Gamma",
         "DiegoPath_Length",
         "DiegoPath_Perc",
         "DiegoPath_Pink",
@@ -44,6 +48,10 @@ pub fn write_lec_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.gyro_path_perc),
             feature.clr_alpha.to_string(),
             feature.clr_gamma.to_string(),
+            feature.left_clr_alpha.to_string(),
+            feature.left_clr_gamma.to_string(),
+            feature.right_clr_alpha.to_string(),
+            feature.right_clr_gamma.to_string(),
             format!("{:.6}", feature.diego_path_length),
             format!("{:.6}", feature.diego_path_perc),
             feature.diego_path_pink.unwrap_or(0).to_string(),
@@ -73,7 +81,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - add DiegoPath fields
+    // Write header - include DiegoPath fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -81,6 +89,10 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
         "GyroPath_Perc",
         "CLR_Alpha",
         "CLR_Gamma",
+        "Left_CLR_Alpha",
+        "Left_CLR_Gamma",
+        "Right_CLR_Alpha",
+        "Right_CLR_Gamma",
         "DiegoPath_Length",
         "DiegoPath_Perc",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
@@ -94,6 +106,10 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.gyro_path_perc),
             feature.clr_alpha.to_string(),
             feature.clr_gamma.to_string(),
+            feature.left_clr_alpha.to_string(),
+            feature.left_clr_gamma.to_string(),
+            feature.right_clr_alpha.to_string(),
+            feature.right_clr_gamma.to_string(),
             format!("{:.6}", feature.diego_path_length),
             format!("{:.6}", feature.diego_path_perc),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
