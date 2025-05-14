@@ -40,3 +40,9 @@ minifb = "0.24"
 [dev-dependencies]
 # Unit testing utilities
 assert_approx_eq = "1.1.0"
+
+[profile.release]
+
+debug = true  # Include debug symbols
+opt-level = 2  # Use a slightly lower optimization level (3 is max)
+codegen-units = 1  # Slower compilation but more thorough optimizations

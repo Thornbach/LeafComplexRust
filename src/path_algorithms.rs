@@ -516,11 +516,9 @@ pub fn calculate_diego_path(
     
     // If straight line doesn't cross transparency, use it
     if !check_straight_line_transparency(&straight_line, image) {
-        println!("Using straight line for DiegoPath (no transparency crossed)");
         return straight_line;
     }
     
-    println!("Straight line crosses transparency, calculating BFS path");
     
     let (width, height) = image.dimensions();
     
@@ -529,96 +527,124 @@ pub fn calculate_diego_path(
         return vec![reference_point];
     }
     
-    // Using BFS to find the shortest path
-    let mut queue = VecDeque::new();
-    let mut visited = HashSet::new();
-    let mut previous: Vec<Vec<Option<(u32, u32)>>> = vec![vec![None; height as usize]; width as usize];
+    // A* implementation for optimal path finding
+    use std::collections::{BinaryHeap, HashMap};
+    use std::cmp::Ordering;
     
-    // Start from reference point
-    queue.push_back(reference_point);
-    visited.insert(reference_point);
+    // Node structure for A* algorithm
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    struct Node {
+        f_score: u32,
+        position: (u32, u32),
+    }
     
-    // The eight directions for movement (including diagonals for a better path)
+    impl Ord for Node {
+        fn cmp(&self, other: &Self) -> Ordering {
+            // Reverse ordering for min-heap
+            other.f_score.cmp(&self.f_score)
+        }
+    }
+    
+    impl PartialOrd for Node {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    
+    // Calculate straight-line distance for the heuristic
+    let straight_dist = {
+        let dx = reference_point.0 as f32 - margin_point.0 as f32;
+        let dy = reference_point.1 as f32 - margin_point.1 as f32;
+        (dx * dx + dy * dy).sqrt() as u32
+    };
+    
+    // Define maximum search area as 2x the straight-line distance
+    let max_search_area = straight_dist * 2;
+    
+    let mut open_set = BinaryHeap::new();
+    let mut came_from = HashMap::new();
+    let mut g_score = HashMap::new();
+    
+    // Initialize starting point
+    open_set.push(Node { f_score: straight_dist, position: reference_point });
+    g_score.insert(reference_point, 0);
+    
+    // The eight directions for movement (including diagonals)
     let directions = [
         (0, 1), (1, 0), (0, -1), (-1, 0),  // Cardinal (NSEW)
         (1, 1), (1, -1), (-1, 1), (-1, -1) // Diagonal
     ];
     
-    // BFS until we find the target or exhaust all possibilities
-    let mut found = false;
-    while !queue.is_empty() && !found {
-        let current = queue.pop_front().unwrap();
-        
+    // A* algorithm main loop
+    while let Some(Node { position, .. }) = open_set.pop() {
         // If we've reached the margin point, we're done
-        if current == margin_point {
-            found = true;
-            break;
+        if position == margin_point {
+            // Reconstruct path
+            let mut path = Vec::new();
+            let mut current = margin_point;
+            
+            while current != reference_point {
+                path.push(current);
+                current = *came_from.get(&current).unwrap_or(&reference_point);
+            }
+            
+            path.push(reference_point);
+            path.reverse();
+            return path;
         }
         
-        // Try all possible directions
+        let current_g = *g_score.get(&position).unwrap_or(&u32::MAX);
+        
+        // If we've exceeded our maximum search area, abandon this path
+        if current_g > max_search_area {
+            continue;
+        }
+        
+        // Try all neighbor directions
         for &(dx, dy) in &directions {
-            let new_x = current.0 as i32 + dx;
-            let new_y = current.1 as i32 + dy;
+            let nx = position.0 as i32 + dx;
+            let ny = position.1 as i32 + dy;
             
             // Check bounds
-            if new_x < 0 || new_y < 0 || new_x >= width as i32 || new_y >= height as i32 {
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
                 continue;
             }
             
-            let new_pos = (new_x as u32, new_y as u32);
+            let neighbor = (nx as u32, ny as u32);
             
-            // Skip if already visited
-            if visited.contains(&new_pos) {
-                continue;
-            }
-            
-            // Check if the pixel is non-transparent (within leaf)
-            let pixel = image.get_pixel(new_pos.0, new_pos.1);
+            // Check if non-transparent
+            let pixel = image.get_pixel(neighbor.0, neighbor.1);
             if pixel[3] == 0 {
                 continue;
             }
             
-            // Mark as visited and record the previous position
-            visited.insert(new_pos);
-            previous[new_pos.0 as usize][new_pos.1 as usize] = Some(current);
-            queue.push_back(new_pos);
-        }
-    }
-    
-    // If we didn't find a path, return the straight line path as fallback
-    if !found {
-        println!("DiegoPath not found, using straight line path as fallback");
-        return straight_line;
-    }
-    
-    // Reconstruct the path
-    let mut path = Vec::new();
-    let mut current = margin_point;
-    
-    // Traverse back from margin point to reference point
-    while current != reference_point {
-        path.push(current);
-        
-        match previous[current.0 as usize][current.1 as usize] {
-            Some(prev) => current = prev,
-            None => {
-                // This shouldn't happen if a path was found, but if it does
-                // return what we have so far plus the reference point
-                println!("Error in DiegoPath reconstruction - missing previous node");
-                path.push(reference_point);
-                path.reverse();
-                return path;
+            // Cost calculation - diagonal moves cost more
+            let move_cost = if dx.abs() + dy.abs() == 1 { 1 } else { 3 }; // 1 for cardinal, 3 for diagonal
+            let tentative_g = current_g + move_cost;
+            
+            let neighbor_g = *g_score.get(&neighbor).unwrap_or(&u32::MAX);
+            
+            if tentative_g < neighbor_g {
+                // This is a better path to the neighbor
+                came_from.insert(neighbor, position);
+                g_score.insert(neighbor, tentative_g);
+                
+                // Heuristic is straight-line distance to goal
+                let dx = neighbor.0 as f32 - margin_point.0 as f32;
+                let dy = neighbor.1 as f32 - margin_point.1 as f32;
+                let h = (dx * dx + dy * dy).sqrt() as u32;
+                
+                // A* cost: g(n) + h(n)
+                let f_score = tentative_g + h;
+                
+                open_set.push(Node { f_score, position: neighbor });
             }
         }
     }
     
-    // Add the reference point
-    path.push(reference_point);
-    
-    // Reverse to get the path from reference to margin
-    path.reverse();
-    
-    path
+    // If no path was found, fall back to the original straight line
+    println!("No path found, using straight line as fallback");
+    straight_line
 }
 
 /// Calculate the path length of the diego path

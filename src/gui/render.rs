@@ -11,7 +11,7 @@ use super::components::{draw_circle, draw_rect, draw_text_bitmap};
 
 /// Update the buffer for display
 pub fn update_buffer(state: &mut GuiState) {
-    // Clear buffer
+
     for pixel in &mut state.buffer {
         *pixel = COLOR_BACKGROUND;
     }
@@ -512,3 +512,4 @@ fn draw_controls(state: &mut GuiState, panel_x: usize, text_y: &mut usize) {
 
     draw_text_bitmap(&mut state.buffer, "- Esc: Exit", panel_x, *text_y, WINDOW_WIDTH, COLOR_TEXT);
 }
+
