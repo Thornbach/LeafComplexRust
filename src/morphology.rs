@@ -307,57 +307,61 @@ static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
     (1, -1),  // up-right
 ];
 
-/// Find the external contour of non-transparent regions
-/// Find the external contour of non-transparent regions
+/// Trace the contour of a region using Moore-Neighbor tracing algorithm
 pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3]) -> Vec<(u32, u32)> {
+    use std::collections::HashSet;
+    
     let (width, height) = image.dimensions();
     let mut contour = Vec::new();
     
-    // Critical fix: Use a visited array to prevent retracing pixels
-    let mut visited = vec![vec![false; height as usize]; width as usize];
-    
-    // Find the first contour point (scanning from top-left)
+    // Find the leftmost non-transparent pixel (first pixel encountered in scanning order)
     let mut start_point = None;
     
-    'outer: for y in 0..height {
-        for x in 0..width {
+    'outer: for x in 0..width {
+        for y in 0..height {
             let pixel = image.get_pixel(x, y);
             
-            // Check if this is a non-transparent pixel we should include in contour
-            let include_in_contour = if is_pink_opaque {
-                // For LEC: Both non-transparent and pink regions are considered part of the object
-                pixel[3] > 0
+            // Check if this is a valid contour pixel based on mode
+            let is_valid = if is_pink_opaque {
+                pixel[3] > 0  // For LEC, any non-transparent pixel is valid
             } else {
-                // For LMC: Only non-transparent, non-pink regions are part of the object
-                pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
+                pixel[3] > 0 && !has_rgb_color(pixel, pink_color)  // For LMC, non-transparent and non-pink
             };
             
-            if include_in_contour {
-                // Check if it's on the border by looking at any of its neighbors
-                let mut is_border = false;
+            if is_valid {
+                // Check if it's a boundary pixel by checking if it has any transparent/invalid neighbor
+                let mut is_boundary = false;
                 
                 // Check 8-connected neighbors
-                for &(dx, dy) in &MOORE_NEIGHBORHOOD {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    
-                    // If neighbor is outside or transparent/pink (depending on mode)
-                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
-                        is_border = true;
-                        break;
-                    } else {
-                        let neighbor = image.get_pixel(nx as u32, ny as u32);
-                        let neighbor_transparent = neighbor[3] == 0;
-                        let neighbor_pink = has_rgb_color(neighbor, pink_color);
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 { continue; }
                         
-                        if (neighbor_transparent) || (!is_pink_opaque && neighbor_pink) {
-                            is_border = true;
+                        let nx = x as i32 + dx;
+                        let ny = y as i32 + dy;
+                        
+                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                            // Out of bounds counts as boundary
+                            is_boundary = true;
                             break;
+                        } else {
+                            let neighbor = image.get_pixel(nx as u32, ny as u32);
+                            let is_neighbor_valid = if is_pink_opaque {
+                                neighbor[3] > 0
+                            } else {
+                                neighbor[3] > 0 && !has_rgb_color(neighbor, pink_color)
+                            };
+                            
+                            if !is_neighbor_valid {
+                                is_boundary = true;
+                                break;
+                            }
                         }
                     }
+                    if is_boundary { break; }
                 }
                 
-                if is_border {
+                if is_boundary {
                     start_point = Some((x, y));
                     break 'outer;
                 }
@@ -365,86 +369,89 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
         }
     }
     
-    // If no contour point was found, return empty vector
-    let (start_x, start_y) = match start_point {
-        Some(point) => point,
-        None => return contour,
+    // If no start point found, return empty contour
+    let start = match start_point {
+        Some(p) => p,
+        None => return Vec::new(),
     };
     
-    // Add the start point to the contour
-    contour.push((start_x, start_y));
-    visited[start_x as usize][start_y as usize] = true;
+    // Add start point to contour
+    contour.push(start);
     
-    // Initialize current position and backtrack index
-    let mut current = (start_x, start_y);
-    let mut jacob_idx = 0; // Start looking from the first Moore neighbor
+    // Initialize variables for contour tracing
+    let mut current = start;
+    let mut visited = HashSet::new();
+    visited.insert(current);
     
-    // Important fix: Add safety limit to prevent infinite loops
-    let max_contour_size = 2 * (width + height) as usize; // Reasonable maximum perimeter
+    // Direction offsets for 8-connected neighbors (clockwise order from right)
+    let directions = [
+        (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)
+    ];
     
-    // Trace the contour using Moore-Neighbor tracing
+    // Start with the right direction
+    let mut direction_idx = 0;
+    
+    // Safety counter to prevent infinite loops
+    let max_iterations = (width * height) as usize * 2;
+    let mut iteration_count = 0;
+    
+    // Main tracing loop
     loop {
+        iteration_count += 1;
+        if iteration_count > max_iterations {
+            println!("Warning: Contour tracing terminated after {} iterations to prevent infinite loop.", max_iterations);
+            break;
+        }
+        
+        // Find the next boundary pixel by checking neighbors in clockwise order
         let mut found_next = false;
         
-        // Search in Moore neighborhood, starting from the backtrack direction
+        // Look in all 8 directions, starting from the backtracking direction + 2
+        // This ensures we follow the boundary by making a right turn whenever possible
         for i in 0..8 {
-            let idx = (jacob_idx + i) % 8;
-            let (dx, dy) = MOORE_NEIGHBORHOOD[idx];
+            // Start from backtracking direction + 2 (90 degrees clockwise from backtrack)
+            let check_idx = (direction_idx + 6 + i) % 8;
+            let (dx, dy) = directions[check_idx];
             let nx = current.0 as i32 + dx;
             let ny = current.1 as i32 + dy;
             
-            if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
-                let next_x = nx as u32;
-                let next_y = ny as u32;
-                let pixel = image.get_pixel(next_x, next_y);
+            // Check bounds
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                continue;
+            }
+            
+            let next = (nx as u32, ny as u32);
+            let pixel = image.get_pixel(next.0, next.1);
+            
+            // Check if this pixel is valid according to our criteria
+            let is_valid = if is_pink_opaque {
+                pixel[3] > 0
+            } else {
+                pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
+            };
+            
+            if is_valid {
+                // We found the next boundary pixel
+                current = next;
+                direction_idx = check_idx;
                 
-                // Check if this neighbor should be included in contour
-                let include_in_contour = if is_pink_opaque {
-                    // For LEC: Both non-transparent and pink regions are considered part of the object
-                    pixel[3] > 0
-                } else {
-                    // For LMC: Only non-transparent, non-pink regions are part of the object
-                    pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
-                };
-                
-                // Critical fix: Only add unvisited pixels
-                if include_in_contour && !visited[next_x as usize][next_y as usize] {
-                    // Add to contour
-                    contour.push((next_x, next_y));
-                    visited[next_x as usize][next_y as usize] = true;
-                    
-                    // Update current position and backtrack index
-                    current = (next_x, next_y);
-                    jacob_idx = (idx + 4) % 8; // Backtrack direction
-                    
-                    found_next = true;
-                    break;
+                // Only add to contour if we haven't visited this pixel yet
+                if !visited.contains(&current) {
+                    contour.push(current);
+                    visited.insert(current);
                 }
+                
+                found_next = true;
+                break;
             }
         }
         
-        // Safety check: Break if contour is becoming too large
-        if contour.len() > max_contour_size {
-            println!("Warning: Contour exceeded maximum size ({}), stopping early.", max_contour_size);
-            break;
-        }
-        
-        // If we couldn't find the next point or we've returned to the start, we're done
-        if !found_next || (current.0 == start_x && current.1 == start_y && contour.len() > 1) {
+        // If we couldn't find a next pixel or we've returned to start and completed at least one circuit
+        if !found_next || (current == start && contour.len() > 1) {
             break;
         }
     }
     
-    // Final safety check: Deduplicate the contour points
-    let mut unique_points = Vec::new();
-    let mut point_set = std::collections::HashSet::new();
-    
-    for point in contour {
-        let point_key = (point.0 as u64) << 32 | (point.1 as u64);
-        if point_set.insert(point_key) {
-            unique_points.push(point);
-        }
-    }
-    
-    unique_points
+    // Return the traced contour
+    contour
 }
