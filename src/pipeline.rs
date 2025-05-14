@@ -9,6 +9,8 @@ use crate::morphology::{apply_opening, mark_opened_regions, trace_contour};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
 use crate::path_algorithms::calculate_clr_regions;
+use crate::image_utils::has_rgb_color;
+
 
 /// Process a single image
 pub fn process_image(
@@ -34,16 +36,37 @@ pub fn process_image(
         &opened_image,
         config.marked_region_color_rgb,
     );
+
+    let lmc_image = {
+        let mut img = marked_image.clone();
+        let (width, height) = img.dimensions();
+        
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = img.get_pixel_mut(x, y);
+                // Check if the pixel is pink (matches marked color)
+                if has_rgb_color(pixel, config.marked_region_color_rgb) {
+                    // Make it transparent (set alpha to 0)
+                    *pixel = image::Rgba([pixel[0], pixel[1], pixel[2], 0]);
+                }
+            }
+        }
+        img
+    };
+
     
     // Save debug images if requested
     if debug {
         let debug_dir = PathBuf::from(&config.output_base_dir).join("debug");
         std::fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
+
+        
         
         // Save original, opened and marked images
         save_image(&processed_image, debug_dir.join(format!("{}_original.png", filename)))?;
         save_image(&opened_image, debug_dir.join(format!("{}_opened.png", filename)))?;
         save_image(&marked_image, debug_dir.join(format!("{}_marked.png", filename)))?;
+        save_image(&lmc_image, debug_dir.join(format!("{}_lmc_image.png", filename)))?;
     }
     
     // Step 3: Calculate reference point
@@ -87,7 +110,7 @@ pub fn process_image(
     // Step 5: Per-Marginal Point Analysis (Iteration 2: Pink Regions are TRANSPARENT)
     // Identify marginal points for LMC
     let lmc_contour = trace_contour(
-        &processed_image,
+        &lmc_image,
         false, // is_pink_opaque = false for LMC
         config.marked_region_color_rgb,
     );

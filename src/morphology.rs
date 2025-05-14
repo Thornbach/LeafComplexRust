@@ -237,6 +237,7 @@ pub fn mark_opened_regions(
     let (width, height) = original.dimensions();
     let mut marked = original.clone();
     
+    // First pass: mark pixels that were non-transparent in original but transparent in opened
     for y in 0..height {
         for x in 0..width {
             let orig_pixel = original.get_pixel(x, y);
@@ -246,6 +247,47 @@ pub fn mark_opened_regions(
             if orig_pixel[3] > 0 && opened_pixel[3] == 0 {
                 // Mark it with the specified color
                 marked.put_pixel(x, y, Rgba([color[0], color[1], color[2], orig_pixel[3]]));
+            }
+        }
+    }
+    
+    // Second pass: add border detection to mark any single-pixel border
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = marked.get_pixel(x, y);
+            
+            // Only process non-transparent pixels that aren't already marked
+            if pixel[3] > 0 && !has_rgb_color(pixel, color) {
+                // Check if this is a border pixel by looking at its neighbors
+                let mut is_border = false;
+                
+                // Check 8-connected neighbors
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        if dx == 0 && dy == 0 { continue; } // Skip the pixel itself
+                        
+                        let nx = x as i32 + dx;
+                        let ny = y as i32 + dy;
+                        
+                        // If neighbor is outside the image or transparent
+                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                            is_border = true;
+                            break;
+                        } else {
+                            let neighbor = marked.get_pixel(nx as u32, ny as u32);
+                            if neighbor[3] == 0 {
+                                is_border = true;
+                                break;
+                            }
+                        }
+                    }
+                    if is_border { break; }
+                }
+                
+                // If this is a border pixel, mark it
+                if is_border {
+                    marked.put_pixel(x, y, Rgba([color[0], color[1], color[2], pixel[3]]));
+                }
             }
         }
     }
@@ -266,9 +308,12 @@ static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
 ];
 
 /// Find the external contour of non-transparent regions
+/// Find the external contour of non-transparent regions
 pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3]) -> Vec<(u32, u32)> {
     let (width, height) = image.dimensions();
     let mut contour = Vec::new();
+    
+    // Critical fix: Use a visited array to prevent retracing pixels
     let mut visited = vec![vec![false; height as usize]; width as usize];
     
     // Find the first contour point (scanning from top-left)
@@ -288,20 +333,31 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             };
             
             if include_in_contour {
-                // Check if it's on the border by looking at its right neighbor
-                if x + 1 >= width || {
-                    let right_pixel = image.get_pixel(x + 1, y);
-                    let right_is_transparent = right_pixel[3] == 0;
-                    let right_is_pink = has_rgb_color(right_pixel, pink_color);
+                // Check if it's on the border by looking at any of its neighbors
+                let mut is_border = false;
+                
+                // Check 8-connected neighbors
+                for &(dx, dy) in &MOORE_NEIGHBORHOOD {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
                     
-                    if is_pink_opaque {
-                        // For LEC: Include in contour if right pixel is transparent
-                        right_is_transparent
+                    // If neighbor is outside or transparent/pink (depending on mode)
+                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        is_border = true;
+                        break;
                     } else {
-                        // For LMC: Include in contour if right pixel is transparent or pink
-                        right_is_transparent || right_is_pink
+                        let neighbor = image.get_pixel(nx as u32, ny as u32);
+                        let neighbor_transparent = neighbor[3] == 0;
+                        let neighbor_pink = has_rgb_color(neighbor, pink_color);
+                        
+                        if (neighbor_transparent) || (!is_pink_opaque && neighbor_pink) {
+                            is_border = true;
+                            break;
+                        }
                     }
-                } {
+                }
+                
+                if is_border {
                     start_point = Some((x, y));
                     break 'outer;
                 }
@@ -322,6 +378,9 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
     // Initialize current position and backtrack index
     let mut current = (start_x, start_y);
     let mut jacob_idx = 0; // Start looking from the first Moore neighbor
+    
+    // Important fix: Add safety limit to prevent infinite loops
+    let max_contour_size = 2 * (width + height) as usize; // Reasonable maximum perimeter
     
     // Trace the contour using Moore-Neighbor tracing
     loop {
@@ -348,6 +407,7 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
                     pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
                 };
                 
+                // Critical fix: Only add unvisited pixels
                 if include_in_contour && !visited[next_x as usize][next_y as usize] {
                     // Add to contour
                     contour.push((next_x, next_y));
@@ -363,11 +423,28 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             }
         }
         
+        // Safety check: Break if contour is becoming too large
+        if contour.len() > max_contour_size {
+            println!("Warning: Contour exceeded maximum size ({}), stopping early.", max_contour_size);
+            break;
+        }
+        
         // If we couldn't find the next point or we've returned to the start, we're done
         if !found_next || (current.0 == start_x && current.1 == start_y && contour.len() > 1) {
             break;
         }
     }
     
-    contour
+    // Final safety check: Deduplicate the contour points
+    let mut unique_points = Vec::new();
+    let mut point_set = std::collections::HashSet::new();
+    
+    for point in contour {
+        let point_key = (point.0 as u64) << 32 | (point.1 as u64);
+        if point_set.insert(point_key) {
+            unique_points.push(point);
+        }
+    }
+    
+    unique_points
 }
