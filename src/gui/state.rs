@@ -30,7 +30,7 @@ pub const COLOR_SELECTED_POINT: u32 = 0xFF0000;  // Red
 pub const COLOR_STRAIGHT_PATH: u32 = 0x0000FF;   // Blue
 pub const COLOR_GOLDEN_PATH: u32 = 0xFF8000;     // Orange
 pub const COLOR_RIGHT_SPIRAL_PATH: u32 = 0x00FFAA;  // Teal for the right spiral path
-pub const COLOR_DIEGO_PATH: u32 = 0xFF00FF;      // Magenta
+pub const COLOR_DIEGO_PATH: u32 = 0x00FFFF;      // Magenta
 pub const COLOR_BACKGROUND: u32 = 0x303030;      // Dark gray
 pub const COLOR_TEXT: u32 = 0xFFFFFF;            // White
 pub const COLOR_SLIDER_BG: u32 = 0x505050;       // Medium gray
@@ -90,7 +90,7 @@ pub struct GuiState {
     pub show_clr_regions: bool,
     pub transparency_check_result: bool,
     pub show_right_spiral: bool,
-    
+    pub show_contour_points: bool,
     // Key repeat state for H/L keys
     pub key_repeat_timer: Option<Instant>,
     pub key_repeat_count: u32,
@@ -139,6 +139,7 @@ impl GuiState {
             key_repeat_timer: None,
             key_repeat_count: 0,
             last_key_pressed: None,
+            show_contour_points: true, // Initialize to true (visible)
         }
     }
     
@@ -244,6 +245,8 @@ pub fn select_point(&mut self, idx: usize) -> Result<()> {
             &self.straight_path, 
             marked
         );
+
+
         
         println!("Straight line transparency check: {}", self.transparency_check_result);
         

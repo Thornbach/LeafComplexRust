@@ -200,18 +200,22 @@ pub fn update_buffer(state: &mut GuiState) {
         }
         
         // Draw contour points
-        for (i, &point) in state.lec_contour.iter().enumerate() {
-            let display_x = (point.0 as f32 * state.scale_factor) as usize + state.offset_x;
-            let display_y = (point.1 as f32 * state.scale_factor) as usize + state.offset_y;
-            
-            if display_x < state.display_width && display_y < WINDOW_HEIGHT {
-                draw_circle(&mut state.buffer, display_x, display_y, 1, 
-                    WINDOW_WIDTH, WINDOW_HEIGHT,
-                    if Some(i) == state.selected_point_idx {
-                        COLOR_SELECTED_POINT
-                    } else {
-                        COLOR_CONTOUR_POINT
-                    });
+        // In the update_buffer function, modify the contour points drawing section
+// Draw contour points
+        if state.show_contour_points {
+            for (i, &point) in state.lec_contour.iter().enumerate() {
+                let display_x = (point.0 as f32 * state.scale_factor) as usize + state.offset_x;
+                let display_y = (point.1 as f32 * state.scale_factor) as usize + state.offset_y;
+                
+                if display_x < state.display_width && display_y < WINDOW_HEIGHT {
+                    draw_circle(&mut state.buffer, display_x, display_y, 1, 
+                        WINDOW_WIDTH, WINDOW_HEIGHT,
+                        if Some(i) == state.selected_point_idx {
+                            COLOR_SELECTED_POINT
+                        } else {
+                            COLOR_CONTOUR_POINT
+                        });
+                }
             }
         }
         
@@ -511,5 +515,7 @@ fn draw_controls(state: &mut GuiState, panel_x: usize, text_y: &mut usize) {
     *text_y += 20;
 
     draw_text_bitmap(&mut state.buffer, "- Esc: Exit", panel_x, *text_y, WINDOW_WIDTH, COLOR_TEXT);
+    
+    *text_y += 20;
+    draw_text_bitmap(&mut state.buffer, "- P: Toggle contour points", panel_x, *text_y, WINDOW_WIDTH, COLOR_TEXT);
 }
-

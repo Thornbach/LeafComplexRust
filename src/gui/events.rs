@@ -76,6 +76,11 @@ pub fn handle_events(window: &mut Window, state: &mut GuiState) -> Result<()> {
             }
         }
     }
+    if window.is_key_pressed(Key::P, minifb::KeyRepeat::No) {
+        state.show_contour_points = !state.show_contour_points;
+        state.status_message = format!("Contour points: {}", 
+                                   if state.show_contour_points { "VISIBLE" } else { "HIDDEN" });
+    }
     
     // Check if H is pressed (previous point)
     if window.is_key_down(Key::H) {
