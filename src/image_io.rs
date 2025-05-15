@@ -11,7 +11,7 @@ pub struct InputImage {
     pub filename: String,
 }
 
-/// Get all PNG files from a directory (non-recursively)
+/// Get all PNG files from a directory (recursively)
 pub fn get_png_files_in_dir<P: AsRef<Path>>(dir_path: P) -> Result<Vec<PathBuf>> {
     let dir_path = dir_path.as_ref();
     
@@ -25,27 +25,35 @@ pub fn get_png_files_in_dir<P: AsRef<Path>>(dir_path: P) -> Result<Vec<PathBuf>>
         )));
     }
     
+    let mut png_files = Vec::new();
+    find_png_files_recursive(dir_path, &mut png_files)?;
+    
+    Ok(png_files)
+}
+
+/// Helper function to recursively search for PNG files
+fn find_png_files_recursive(dir_path: &Path, result: &mut Vec<PathBuf>) -> Result<()> {
     let entries = fs::read_dir(dir_path)
         .map_err(|e| LeafComplexError::Io(e))?;
     
-    let png_files: Vec<PathBuf> = entries
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let path = entry.path();
-            
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext.to_ascii_lowercase() == "png" {
-                        return Some(path);
-                    }
+    for entry in entries {
+        let entry = entry.map_err(|e| LeafComplexError::Io(e))?;
+        let path = entry.path();
+        
+        if path.is_dir() {
+            // Recursively search subdirectories
+            find_png_files_recursive(&path, result)?;
+        } else if path.is_file() {
+            // Check if it's a PNG file
+            if let Some(ext) = path.extension() {
+                if ext.to_ascii_lowercase() == "png" {
+                    result.push(path);
                 }
             }
-            
-            None
-        })
-        .collect();
+        }
+    }
     
-    Ok(png_files)
+    Ok(())
 }
 
 /// Load a PNG image ensuring RGBA format

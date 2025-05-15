@@ -20,7 +20,12 @@ pub fn process_image(
     config: &Config,
     debug: bool,
 ) -> Result<()> {
-    let InputImage { image, path: _, filename } = input_image;
+    let InputImage { image, path, filename } = input_image;
+
+    let subfolder = path.parent()
+    .and_then(|p| p.file_name())
+    .and_then(|s| s.to_str())
+    .unwrap_or("root");
     
     // Step 1: Resize if configured
     let processed_image = if let Some(dimensions) = config.resize_dimensions {
@@ -149,6 +154,7 @@ pub fn process_image(
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
+        subfolder,
         spectral_entropy,
         circularity,
         area
