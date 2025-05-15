@@ -28,7 +28,6 @@ pub struct MarginalPointFeatures {
     pub diego_path_pink: Option<u32>, // Pink pixels along the diego path
 }
 
-/// Generate features for all marginal points
 pub fn generate_features(
     reference_point: (u32, u32),
     marginal_points: &[(u32, u32)],
@@ -85,11 +84,19 @@ pub fn generate_features(
             straight_line.clone()
         };
         
-        let diego_path_length = calculate_diego_path_length(&diego_path);
+        // IMPORTANT FIX: When straight path doesn't cross transparency, 
+        // Diego path length should exactly equal straight path length
+        let diego_path_length = if crosses_transparency {
+            calculate_diego_path_length(&diego_path)
+        } else {
+            // Use the exact same value as straight_path_length for consistency
+            straight_path_length
+        };
+        
         let diego_path_perc = if straight_path_length > 0.0 {
             (diego_path_length / straight_path_length) * 100.0
         } else {
-            0.0
+            100.0  // Set to 100% when they're identical (and when straight path length is zero)
         };
         
         // Calculate DiegoPath pink pixels
