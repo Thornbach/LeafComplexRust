@@ -307,22 +307,21 @@ static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
     (1, -1),  // up-right
 ];
 
+/// Trace the contour of a region using Moore-Neighbor tracing algorithm
 pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3]) -> Vec<(u32, u32)> {
     use std::collections::HashSet;
     
     let (width, height) = image.dimensions();
     let mut contour = Vec::new();
     
-    // Create a binary mask for faster boundary checking
-    let mut valid_mask = vec![vec![false; height as usize]; width as usize];
-    let mut boundary_mask = vec![vec![false; height as usize]; width as usize];
+    // Find the leftmost non-transparent pixel (first pixel encountered in scanning order)
+    let mut start_point = None;
     
-    // First pass: determine valid pixels and pre-compute boundary pixels
-    for y in 0..height {
-        for x in 0..width {
+    'outer: for x in 0..width {
+        for y in 0..height {
             let pixel = image.get_pixel(x, y);
             
-            // Check if this is a valid pixel based on mode
+            // Check if this is a valid contour pixel based on mode
             let is_valid = if is_pink_opaque {
                 pixel[3] > 0  // For LEC, any non-transparent pixel is valid
             } else {
@@ -330,9 +329,7 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             };
             
             if is_valid {
-                valid_mask[x as usize][y as usize] = true;
-                
-                // Check if it's a boundary pixel
+                // Check if it's a boundary pixel by checking if it has any transparent/invalid neighbor
                 let mut is_boundary = false;
                 
                 // Check 8-connected neighbors
@@ -365,39 +362,14 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
                 }
                 
                 if is_boundary {
-                    boundary_mask[x as usize][y as usize] = true;
+                    start_point = Some((x, y));
+                    break 'outer;
                 }
             }
         }
     }
     
-    // Count boundary pixels for debugging
-    let boundary_count = boundary_mask.iter()
-        .map(|col| col.iter().filter(|&&is_boundary| is_boundary).count())
-        .sum::<usize>();
-        
-    println!("Found {} boundary pixels for {} mode", 
-             boundary_count, if is_pink_opaque { "LEC" } else { "LMC" });
-    
-    // If no boundary pixels, return empty contour
-    if boundary_count == 0 {
-        println!("Warning: No boundary pixels found!");
-        return Vec::new();
-    }
-    
-    // Find the leftmost boundary pixel
-    let mut start_point = None;
-    
-    'find_start: for x in 0..width {
-        for y in 0..height {
-            if boundary_mask[x as usize][y as usize] {
-                start_point = Some((x, y));
-                break 'find_start;
-            }
-        }
-    }
-    
-    // If no start point found (shouldn't happen if boundary_count > 0)
+    // If no start point found, return empty contour
     let start = match start_point {
         Some(p) => p,
         None => return Vec::new(),
@@ -420,7 +392,7 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
     let mut direction_idx = 0;
     
     // Safety counter to prevent infinite loops
-    let max_iterations = boundary_count * 2; // Set based on expected boundary size
+    let max_iterations = (width * height) as usize * 2;
     let mut iteration_count = 0;
     
     // Main tracing loop
@@ -449,10 +421,17 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             }
             
             let next = (nx as u32, ny as u32);
+            let pixel = image.get_pixel(next.0, next.1);
             
-            // Use pre-computed valid mask for efficiency
-            if valid_mask[next.0 as usize][next.1 as usize] {
-                // We found the next pixel
+            // Check if this pixel is valid according to our criteria
+            let is_valid = if is_pink_opaque {
+                pixel[3] > 0
+            } else {
+                pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
+            };
+            
+            if is_valid {
+                // We found the next boundary pixel
                 current = next;
                 direction_idx = check_idx;
                 
@@ -473,25 +452,139 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
         }
     }
     
-    // For LMC mode, if we found very few points (likely an issue), try fallback strategy
-    if !is_pink_opaque && contour.len() < 10 {
-        println!("Warning: Very few LMC contour points ({}) found. Using fallback strategy.", contour.len());
-        
-        // Fallback: collect all boundary pixels, not just a connected contour
-        let mut all_boundary_points = Vec::new();
-        
-        for x in 0..width {
-            for y in 0..height {
-                if boundary_mask[x as usize][y as usize] {
-                    all_boundary_points.push((x, y));
-                }
-            }
-        }
-        
-        println!("Fallback found {} LMC boundary points", all_boundary_points.len());
-        return all_boundary_points;
-    }
-    
     // Return the traced contour
     contour
+}
+
+pub fn create_lmc_with_com_component(
+    processed_image: &RgbaImage, 
+    marked_image: &mut RgbaImage, 
+    pink_color: [u8; 3]
+) -> RgbaImage {
+    let (width, height) = processed_image.dimensions();
+    
+    // First, calculate the center of mass
+    let (com_x, com_y) = calculate_center_of_mass(processed_image)
+        .unwrap_or((width / 2, height / 2)); // Fallback to center if calculation fails
+    
+    println!("Center of Mass: ({}, {})", com_x, com_y);
+    
+    // Create a version of the image with pink pixels made transparent
+    let mut temp_image = marked_image.clone();
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = temp_image.get_pixel_mut(x, y);
+            if has_rgb_color(pixel, pink_color) {
+                *pixel = image::Rgba([0, 0, 0, 0]);
+            }
+        }
+    }
+    
+    // Create result image (initially all transparent)
+    let mut lmc_image = RgbaImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            lmc_image.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+        }
+    }
+    
+    // Flood fill from COM to find the connected component
+    let mut visited = vec![false; (width * height) as usize];
+    let mut queue = std::collections::VecDeque::new();
+    let mut com_component = Vec::new();
+    
+    // Start from COM
+    queue.push_back((com_x, com_y));
+    visited[(com_y * width + com_x) as usize] = true;
+    
+    // 8-connected neighbors
+    let directions = [
+        (0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)
+    ];
+    
+    // Flood fill
+    while let Some((cx, cy)) = queue.pop_front() {
+        let idx = (cy * width + cx) as usize;
+        
+        // Add to component
+        com_component.push((cx, cy));
+        
+        // Copy pixel to LMC image
+        lmc_image.put_pixel(cx, cy, *temp_image.get_pixel(cx, cy));
+        
+        // Check neighbors
+        for &(dx, dy) in &directions {
+            let nx = cx as i32 + dx;
+            let ny = cy as i32 + dy;
+            
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                continue;
+            }
+            
+            let nx = nx as u32;
+            let ny = ny as u32;
+            let nidx = (ny * width + nx) as usize;
+            
+            if visited[nidx] {
+                continue;
+            }
+            
+            let npixel = temp_image.get_pixel(nx, ny);
+            if npixel[3] > 0 {
+                // Non-transparent pixel
+                queue.push_back((nx, ny));
+                visited[nidx] = true;
+            }
+        }
+    }
+    
+    println!("COM component has {} pixels", com_component.len());
+    
+    // Update marking: If pixel is in original but not in COM component, mark it pink
+    for y in 0..height {
+        for x in 0..width {
+            let orig_pixel = processed_image.get_pixel(x, y);
+            let lmc_pixel = lmc_image.get_pixel(x, y);
+            
+            // If pixel is non-transparent in original but transparent in LMC
+            if orig_pixel[3] > 0 && lmc_pixel[3] == 0 {
+                // Mark it pink in the marked image
+                marked_image.put_pixel(x, y, image::Rgba([pink_color[0], pink_color[1], pink_color[2], orig_pixel[3]]));
+            }
+        }
+    }
+    
+    lmc_image
+}
+
+/// Calculate the Center of Mass (COM) - adapted from your existing code
+pub fn calculate_center_of_mass(image: &RgbaImage) -> Option<(u32, u32)> {
+    let (width, height) = image.dimensions();
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    let mut sum_alpha = 0.0;
+    
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y);
+            let alpha = pixel[3] as f32;
+            
+            if alpha > 0.0 {
+                sum_x += x as f32 * alpha;
+                sum_y += y as f32 * alpha;
+                sum_alpha += alpha;
+            }
+        }
+    }
+    
+    if sum_alpha <= 0.0 {
+        return None;
+    }
+    
+    // Calculate COM
+    let com_x = sum_x / sum_alpha;
+    let com_y = sum_y / sum_alpha;
+    
+    // Round to nearest integer
+    Some((com_x.round() as u32, com_y.round() as u32))
 }

@@ -5,7 +5,7 @@ use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::generate_features;
 use crate::image_io::{InputImage, save_image};
 use crate::image_utils::resize_image;
-use crate::morphology::{apply_opening, mark_opened_regions, trace_contour};
+use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
 use crate::path_algorithms::calculate_clr_regions;
@@ -33,29 +33,17 @@ pub fn process_image(
     let opened_image = apply_opening(&processed_image, config.opening_kernel_size)?;
     
     // Step 2 (continued): Mark opened regions
-    let marked_image = mark_opened_regions(
+    let mut marked_image = mark_opened_regions(
         &processed_image,
         &opened_image,
         config.marked_region_color_rgb,
     );
 
-    let lmc_image = {
-        let mut img = marked_image.clone();
-        let (width, height) = img.dimensions();
-        
-        for y in 0..height {
-            for x in 0..width {
-                let pixel = img.get_pixel_mut(x, y);
-                // Check if the pixel is pink (matches marked color)
-                if has_rgb_color(pixel, config.marked_region_color_rgb) {
-                    // Make it transparent (set alpha to 0)
-                    *pixel = image::Rgba([pixel[0], pixel[1], pixel[2], 0]);
-                }
-            }
-        }
-        img
-    };
-
+    let lmc_image = create_lmc_with_com_component(
+        &processed_image,
+        &mut marked_image, 
+        config.marked_region_color_rgb
+    );
     
     // Save debug images if requested
     if debug {
