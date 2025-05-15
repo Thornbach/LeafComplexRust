@@ -228,7 +228,6 @@ pub fn apply_opening(
     Ok(dilated)
 }
 
-/// Create a marked image where opened regions are colored
 pub fn mark_opened_regions(
     original: &RgbaImage, 
     opened: &RgbaImage, 
@@ -237,7 +236,7 @@ pub fn mark_opened_regions(
     let (width, height) = original.dimensions();
     let mut marked = original.clone();
     
-    // First pass: mark pixels that were non-transparent in original but transparent in opened
+    // Mark pixels that were non-transparent in original but transparent in opened
     for y in 0..height {
         for x in 0..width {
             let orig_pixel = original.get_pixel(x, y);
@@ -250,51 +249,9 @@ pub fn mark_opened_regions(
             }
         }
     }
-    
-    // Second pass: add border detection to mark any single-pixel border
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = marked.get_pixel(x, y);
-            
-            // Only process non-transparent pixels that aren't already marked
-            if pixel[3] > 0 && !has_rgb_color(pixel, color) {
-                // Check if this is a border pixel by looking at its neighbors
-                let mut is_border = false;
-                
-                // Check 8-connected neighbors
-                for dy in -1..=1 {
-                    for dx in -1..=1 {
-                        if dx == 0 && dy == 0 { continue; } // Skip the pixel itself
-                        
-                        let nx = x as i32 + dx;
-                        let ny = y as i32 + dy;
-                        
-                        // If neighbor is outside the image or transparent
-                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
-                            is_border = true;
-                            break;
-                        } else {
-                            let neighbor = marked.get_pixel(nx as u32, ny as u32);
-                            if neighbor[3] == 0 {
-                                is_border = true;
-                                break;
-                            }
-                        }
-                    }
-                    if is_border { break; }
-                }
-                
-                // If this is a border pixel, mark it
-                if is_border {
-                    marked.put_pixel(x, y, Rgba([color[0], color[1], color[2], pixel[3]]));
-                }
-            }
-        }
-    }
-    
+        
     marked
 }
-
 /// Direction vectors for Moore-Neighbor contour tracing
 static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
     (1, 0),   // right
