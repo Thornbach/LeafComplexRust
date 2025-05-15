@@ -154,12 +154,11 @@ pub fn process_image(
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
-        subfolder,
+        subfolder,  // Pass the subfolder parameter
         spectral_entropy,
         circularity,
         area
     )?;
-
     // Debug output
     if debug {
         println!("Thornfiddle analysis completed:");

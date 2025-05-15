@@ -160,6 +160,7 @@ pub fn calculate_features_spectral_entropy(features: &[MarginalPointFeatures]) -
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
+    subfolder: &str,  // New parameter for subfolder
     spectral_entropy: f64,
     circularity: f64,
     area: u32,
@@ -185,9 +186,10 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header only for new file
+        // Write header only for new file - added "Subfolder" column
         writer.write_record(&[
             "ID",
+            "Subfolder",  // New column
             "Spectral_Entropy",
             "Circularity",
             "Area",
@@ -196,9 +198,10 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         writer
     };
     
-    // Write data
+    // Write data - now including subfolder
     writer.write_record(&[
         filename,
+        subfolder,  // Include subfolder in record
         &format!("{:.6}", spectral_entropy),
         &format!("{:.6}", circularity),
         &area.to_string(),
