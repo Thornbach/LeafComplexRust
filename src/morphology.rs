@@ -307,21 +307,22 @@ static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
     (1, -1),  // up-right
 ];
 
-/// Trace the contour of a region using Moore-Neighbor tracing algorithm
 pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3]) -> Vec<(u32, u32)> {
     use std::collections::HashSet;
     
     let (width, height) = image.dimensions();
     let mut contour = Vec::new();
     
-    // Find the leftmost non-transparent pixel (first pixel encountered in scanning order)
-    let mut start_point = None;
+    // Create a binary mask for faster boundary checking
+    let mut valid_mask = vec![vec![false; height as usize]; width as usize];
+    let mut boundary_mask = vec![vec![false; height as usize]; width as usize];
     
-    'outer: for x in 0..width {
-        for y in 0..height {
+    // First pass: determine valid pixels and pre-compute boundary pixels
+    for y in 0..height {
+        for x in 0..width {
             let pixel = image.get_pixel(x, y);
             
-            // Check if this is a valid contour pixel based on mode
+            // Check if this is a valid pixel based on mode
             let is_valid = if is_pink_opaque {
                 pixel[3] > 0  // For LEC, any non-transparent pixel is valid
             } else {
@@ -329,7 +330,9 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             };
             
             if is_valid {
-                // Check if it's a boundary pixel by checking if it has any transparent/invalid neighbor
+                valid_mask[x as usize][y as usize] = true;
+                
+                // Check if it's a boundary pixel
                 let mut is_boundary = false;
                 
                 // Check 8-connected neighbors
@@ -362,14 +365,39 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
                 }
                 
                 if is_boundary {
-                    start_point = Some((x, y));
-                    break 'outer;
+                    boundary_mask[x as usize][y as usize] = true;
                 }
             }
         }
     }
     
-    // If no start point found, return empty contour
+    // Count boundary pixels for debugging
+    let boundary_count = boundary_mask.iter()
+        .map(|col| col.iter().filter(|&&is_boundary| is_boundary).count())
+        .sum::<usize>();
+        
+    println!("Found {} boundary pixels for {} mode", 
+             boundary_count, if is_pink_opaque { "LEC" } else { "LMC" });
+    
+    // If no boundary pixels, return empty contour
+    if boundary_count == 0 {
+        println!("Warning: No boundary pixels found!");
+        return Vec::new();
+    }
+    
+    // Find the leftmost boundary pixel
+    let mut start_point = None;
+    
+    'find_start: for x in 0..width {
+        for y in 0..height {
+            if boundary_mask[x as usize][y as usize] {
+                start_point = Some((x, y));
+                break 'find_start;
+            }
+        }
+    }
+    
+    // If no start point found (shouldn't happen if boundary_count > 0)
     let start = match start_point {
         Some(p) => p,
         None => return Vec::new(),
@@ -392,7 +420,7 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
     let mut direction_idx = 0;
     
     // Safety counter to prevent infinite loops
-    let max_iterations = (width * height) as usize * 2;
+    let max_iterations = boundary_count * 2; // Set based on expected boundary size
     let mut iteration_count = 0;
     
     // Main tracing loop
@@ -421,17 +449,10 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
             }
             
             let next = (nx as u32, ny as u32);
-            let pixel = image.get_pixel(next.0, next.1);
             
-            // Check if this pixel is valid according to our criteria
-            let is_valid = if is_pink_opaque {
-                pixel[3] > 0
-            } else {
-                pixel[3] > 0 && !has_rgb_color(pixel, pink_color)
-            };
-            
-            if is_valid {
-                // We found the next boundary pixel
+            // Use pre-computed valid mask for efficiency
+            if valid_mask[next.0 as usize][next.1 as usize] {
+                // We found the next pixel
                 current = next;
                 direction_idx = check_idx;
                 
@@ -450,6 +471,25 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
         if !found_next || (current == start && contour.len() > 1) {
             break;
         }
+    }
+    
+    // For LMC mode, if we found very few points (likely an issue), try fallback strategy
+    if !is_pink_opaque && contour.len() < 10 {
+        println!("Warning: Very few LMC contour points ({}) found. Using fallback strategy.", contour.len());
+        
+        // Fallback: collect all boundary pixels, not just a connected contour
+        let mut all_boundary_points = Vec::new();
+        
+        for x in 0..width {
+            for y in 0..height {
+                if boundary_mask[x as usize][y as usize] {
+                    all_boundary_points.push((x, y));
+                }
+            }
+        }
+        
+        println!("Fallback found {} LMC boundary points", all_boundary_points.len());
+        return all_boundary_points;
     }
     
     // Return the traced contour
