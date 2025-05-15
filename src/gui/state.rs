@@ -6,7 +6,7 @@ use image::RgbaImage;
 use minifb::Key;
 
 use crate::config::Config;
-use crate::errors::{LeafComplexError, Result};
+use crate::errors::Result;
 use crate::feature_extraction::{generate_features, MarginalPointFeatures};
 use crate::morphology::{apply_opening, mark_opened_regions, trace_contour};
 use crate::path_algorithms::{
@@ -510,7 +510,7 @@ pub fn select_point(&mut self, idx: usize) -> Result<()> {
     }
     
     /// Handle key repeat for H/L keys
-    pub fn handle_key_repeat(&mut self, key: Key, current_idx: Option<usize>, is_forward: bool) -> Result<()> {
+    pub fn handle_key_repeat(&mut self, _key: Key, current_idx: Option<usize>, is_forward: bool) -> Result<()> {
         let contour_len = self.lec_contour.len();
         if contour_len == 0 {
             return Ok(());

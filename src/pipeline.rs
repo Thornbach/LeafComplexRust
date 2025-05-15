@@ -10,6 +10,8 @@ use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
 use crate::path_algorithms::calculate_clr_regions;
 use crate::image_utils::has_rgb_color;
+use crate::shape_analysis::analyze_shape;
+use crate::thornfiddle;
 
 
 /// Process a single image
@@ -152,6 +154,25 @@ pub fn process_image(
     // Step 6: Write output CSVs
     write_lec_csv(&lec_features, &config.output_base_dir, &filename)?;
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename)?;
+
+    let (area, circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
+    let spectral_entropy = thornfiddle::calculate_features_spectral_entropy(&lmc_features);
+
+    thornfiddle::create_thornfiddle_summary(
+        &config.output_base_dir,
+        &filename,
+        spectral_entropy,
+        circularity,
+        area
+    )?;
+
+    // Debug output
+    if debug {
+        println!("Thornfiddle analysis completed:");
+        println!("  Spectral Entropy: {:.6}", spectral_entropy);
+        println!("  Circularity: {:.6}", circularity);
+        println!("  Area: {} pixels", area);
+    }
     
     Ok(())
 }

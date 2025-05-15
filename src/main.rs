@@ -9,6 +9,8 @@ mod path_algorithms;
 mod pipeline;
 mod point_analysis;
 mod gui;
+mod thornfiddle;
+mod shape_analysis;
 
 
 use std::path::PathBuf;

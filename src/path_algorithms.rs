@@ -1,4 +1,4 @@
-use std::collections::{VecDeque, HashSet};
+use std::collections::VecDeque;
 use image::RgbaImage;
 use bresenham::Bresenham;
 use crate::image_utils::{is_non_transparent, has_rgb_color};
@@ -517,7 +517,7 @@ pub fn calculate_diego_path(
     
     // Find the last non-transparent point on the straight line
     let mut path = Vec::new();
-    let mut last_valid_idx = 0;
+    let mut _last_valid_idx = 0;
     
     for (i, &point) in straight_line.iter().enumerate() {
         let pixel = image.get_pixel(point.0, point.1);
@@ -525,7 +525,7 @@ pub fn calculate_diego_path(
             break;
         }
         path.push(point);
-        last_valid_idx = i;
+        _last_valid_idx = i;
     }
     
     // If we somehow couldn't find any valid points, return the original straight line
