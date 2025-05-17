@@ -27,7 +27,11 @@ LeafComplexR is a high-performance Rust application for analyzing leaf morpholog
 
 Run the program with an input image:
 ```bash
-cargo run --release -- --input path/to/your/image.png --gui
+cargo run --release -- --input "path/to/your/image.png"
+```
+
+```bash
+cargo run -- --input "path/to/your/image.png" --gui
 ```
 
 ### Command Line Options
