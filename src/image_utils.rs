@@ -59,27 +59,56 @@ pub fn convert_coordinates(x: u32, y: u32, _height: u32) -> (u32, u32) {
     (x, y)
 }
 
-/// Generate a circular kernel of a given size (diameter)
+// In image_utils.rs
 pub fn create_circular_kernel(diameter: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
-    let radius = (diameter as f32) / 2.0;
-    let center = radius;
-    
+    if diameter == 0 {
+        return ImageBuffer::new(0, 0);
+    }
+
     let mut kernel = ImageBuffer::new(diameter, diameter);
-    
-    for y in 0..diameter {
-        for x in 0..diameter {
-            let dx = (x as f32) - center;
-            let dy = (y as f32) - center;
-            let distance = (dx * dx + dy * dy).sqrt();
-            
-            if distance <= radius {
-                kernel.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+    let center = (diameter - 1) as f32 / 2.0; // Center coordinate for indices 0..diameter-1
+
+    // For odd diameters, R_sq = ((D-1)/2)^2 ensures a typical cross for D=3, etc.
+    // For even diameters, using (D/2)^2 is more common to fill out e.g. a 2x2.
+    let radius_sq: f32;
+    if diameter % 2 == 1 { // Odd
+        radius_sq = ((diameter - 1) as f32 / 2.0).powi(2);
+    } else { // Even
+        radius_sq = (diameter as f32 / 2.0).powi(2);
+        // For even diameters, an exact circle might not touch pixel centers well.
+        // The R^2 for even D often implies pixels whose corners are within the circle,
+        // or whose centers are within a slightly larger conceptual circle.
+        // The (D/2.0)^2 radius will make a D=2 kernel a 2x2 square if dist_sq includes pixel centers.
+    }
+
+    for y_idx in 0..diameter {
+        for x_idx in 0..diameter {
+            let dx = x_idx as f32 - center;
+            let dy = y_idx as f32 - center;
+            let mut dist_sq = dx * dx + dy * dy;
+
+            if diameter % 2 == 0 && diameter > 0 {
+                // For even diameters, to ensure a (e.g.) 2x2 kernel for D=2,
+                // we often consider a pixel (i,j) part of the disk if the square cell it represents
+                // intersects the continuous disk. A common approximation is to check if its center
+                // is within a slightly expanded radius or use specific rules.
+                // The (D/2.0)^2 radius with dx/dy from integer coords to 'center' ( (D-1)/2.0 )
+                // will result in a 2x2 for D=2:
+                // D=2, center=0.5. radius_sq = (2/2)^2 = 1.
+                // (0,0): dx=-0.5, dy=-0.5. dist_sq=0.5. 0.5 <= 1. IN.
+                // This ensures D=2 creates a 2x2, D=4 creates a 4x4 etc.
+                // For more "circular" even kernels, more complex rules or larger lookup tables are needed.
+            }
+
+
+            // Add a small epsilon for floating point comparisons to handle points exactly on the circumference.
+            if dist_sq <= radius_sq + 1e-6 {
+                kernel.put_pixel(x_idx, y_idx, Rgba([255, 255, 255, 255]));
             } else {
-                kernel.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+                kernel.put_pixel(x_idx, y_idx, Rgba([0, 0, 0, 0]));
             }
         }
     }
-    
     kernel
 }
 

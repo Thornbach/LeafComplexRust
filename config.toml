@@ -8,7 +8,7 @@ output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will
 resize_dimensions = [512, 512]  # Optional [width, height] for batch processing
 gui_resize_dimensions = [1024 , 1024]  # Optional [width, height] for GUI mode - speeds up analysis
 
-opening_kernel_size = 23  # Diameter/radius for the circular opening algorithm's structuring element
+opening_kernel_size = 73  # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
 
 # Analysis Parameters
