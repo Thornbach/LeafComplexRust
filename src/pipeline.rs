@@ -5,7 +5,7 @@ use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::generate_features;
 use crate::image_io::{InputImage, save_image};
 use crate::image_utils::resize_image;
-use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
+use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component, resample_contour};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
 use crate::path_algorithms::calculate_clr_regions;
@@ -79,11 +79,18 @@ pub fn process_image(
     
     // Step 4: Per-Marginal Point Analysis (Iteration 1: Pink Regions are OPAQUE)
     // Identify marginal points
-    let lec_contour = trace_contour(
+    let lec_raw_contour = trace_contour(
         &marked_image,
         true, // is_pink_opaque = true for LEC
         config.marked_region_color_rgb,
     );
+    
+    // NEW: Resample the LEC contour to fixed number of points
+    let lec_contour = if lec_raw_contour.len() > config.resampled_contour_points {
+        resample_contour(&lec_raw_contour, config.resampled_contour_points)
+    } else {
+        lec_raw_contour.clone() // Clone to avoid move
+    };
     
     // Generate features for each marginal point
     let lec_features = generate_features(
@@ -99,16 +106,24 @@ pub fn process_image(
     
     // Debug output
     if debug {
-        println!("LEC contour points: {}", lec_contour.len());
+        println!("LEC contour points: {} (raw) -> {} (resampled)", 
+                lec_raw_contour.len(), lec_contour.len());
     }
     
     // Step 5: Per-Marginal Point Analysis (Iteration 2: Pink Regions are TRANSPARENT)
     // Identify marginal points for LMC
-    let lmc_contour = trace_contour(
+    let lmc_raw_contour = trace_contour(
         &lmc_image,
         false, // is_pink_opaque = false for LMC
         config.marked_region_color_rgb,
     );
+    
+    // NEW: Resample the LMC contour to fixed number of points
+    let lmc_contour = if lmc_raw_contour.len() > config.resampled_contour_points {
+        resample_contour(&lmc_raw_contour, config.resampled_contour_points)
+    } else {
+        lmc_raw_contour.clone() // Clone to avoid move
+    };
     
     // Generate features for each marginal point
     let lmc_features = generate_features(
@@ -124,7 +139,8 @@ pub fn process_image(
     
     // Debug output
     if debug {
-        println!("LMC contour points: {}", lmc_contour.len());
+        println!("LMC contour points: {} (raw) -> {} (resampled)", 
+                lmc_raw_contour.len(), lmc_contour.len());
         
         // Calculate and display CLR regions for debugging
         // Select a sample point (first point in contour) for demonstration
@@ -149,6 +165,7 @@ pub fn process_image(
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename)?;
 
     let (area, circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
+    // NEW: Use updated function that now includes Z-score normalization
     let spectral_entropy = thornfiddle::calculate_features_spectral_entropy(&lmc_features);
 
     thornfiddle::create_thornfiddle_summary(
@@ -165,6 +182,7 @@ pub fn process_image(
         println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Circularity: {:.6}", circularity);
         println!("  Area: {} pixels", area);
+        println!("  Used resampled contour size: {}", config.resampled_contour_points);
     }
     
     Ok(())

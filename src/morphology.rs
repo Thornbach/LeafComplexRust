@@ -5,7 +5,6 @@ use rayon::prelude::*;
 use crate::errors::{LeafComplexError, Result};
 use crate::image_utils::{create_circular_kernel, in_bounds, has_rgb_color, ALPHA_THRESHOLD};
 
-/// Applies morphological erosion to the alpha channel
 pub fn erode_alpha(
     image: &RgbaImage,
     kernel: &ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -544,4 +543,111 @@ pub fn calculate_center_of_mass(image: &RgbaImage) -> Option<(u32, u32)> {
     
     // Round to nearest integer
     Some((com_x.round() as u32, com_y.round() as u32))
+}
+
+pub fn resample_contour(contour: &[(u32, u32)], target_points: usize) -> Vec<(u32, u32)> {
+    if contour.len() <= 1 || target_points <= 1 {
+        return contour.to_vec();
+    }
+    
+    if target_points >= contour.len() {
+        // If target is larger than current, just return the original
+        return contour.to_vec();
+    }
+    
+    // Calculate cumulative distances along the contour
+    let mut cumulative_distances = vec![0.0; contour.len()];
+    let mut total_perimeter = 0.0;
+    
+    for i in 1..contour.len() {
+        let dx = contour[i].0 as f64 - contour[i-1].0 as f64;
+        let dy = contour[i].1 as f64 - contour[i-1].1 as f64;
+        let segment_length = (dx * dx + dy * dy).sqrt();
+        total_perimeter += segment_length;
+        cumulative_distances[i] = total_perimeter;
+    }
+    
+    // Handle closed contour - add distance from last point back to first
+    if contour.len() > 2 {
+        let last_idx = contour.len() - 1;
+        let dx = contour[0].0 as f64 - contour[last_idx].0 as f64;
+        let dy = contour[0].1 as f64 - contour[last_idx].1 as f64;
+        let closing_segment = (dx * dx + dy * dy).sqrt();
+        total_perimeter += closing_segment;
+    }
+    
+    // Generate target distances for resampled points
+    let mut resampled_contour = Vec::with_capacity(target_points);
+    
+    for i in 0..target_points {
+        let target_distance = (i as f64 * total_perimeter) / target_points as f64;
+        
+        // Find the segment containing this target distance
+        let mut segment_start_idx = 0;
+        for j in 1..cumulative_distances.len() {
+            if cumulative_distances[j] > target_distance {
+                segment_start_idx = j - 1;
+                break;
+            }
+            if j == cumulative_distances.len() - 1 {
+                segment_start_idx = j;
+            }
+        }
+        
+        // Handle the case where target_distance is in the closing segment
+        if target_distance > cumulative_distances[cumulative_distances.len() - 1] {
+            // Interpolate between last point and first point
+            let excess_distance = target_distance - cumulative_distances[cumulative_distances.len() - 1];
+            let last_idx = contour.len() - 1;
+            let dx = contour[0].0 as f64 - contour[last_idx].0 as f64;
+            let dy = contour[0].1 as f64 - contour[last_idx].1 as f64;
+            let closing_segment_length = (dx * dx + dy * dy).sqrt();
+            
+            if closing_segment_length > 0.0 {
+                let t = excess_distance / closing_segment_length;
+                let x = contour[last_idx].0 as f64 + t * dx;
+                let y = contour[last_idx].1 as f64 + t * dy;
+                resampled_contour.push((x.round() as u32, y.round() as u32));
+            } else {
+                resampled_contour.push(contour[last_idx]);
+            }
+        } else {
+            // Interpolate within the current segment
+            let segment_end_idx = if segment_start_idx == cumulative_distances.len() - 1 {
+                0 // Wrap to first point for closed contour
+            } else {
+                segment_start_idx + 1
+            };
+            
+            if segment_start_idx == segment_end_idx {
+                // Single point case
+                resampled_contour.push(contour[segment_start_idx]);
+            } else {
+                let segment_start_distance = cumulative_distances[segment_start_idx];
+                let segment_end_distance = if segment_end_idx == 0 {
+                    total_perimeter
+                } else {
+                    cumulative_distances[segment_end_idx]
+                };
+                
+                let segment_length = segment_end_distance - segment_start_distance;
+                
+                if segment_length > 0.0 {
+                    let t = (target_distance - segment_start_distance) / segment_length;
+                    
+                    let start_point = contour[segment_start_idx];
+                    let end_point = contour[segment_end_idx];
+                    
+                    let x = start_point.0 as f64 + t * (end_point.0 as f64 - start_point.0 as f64);
+                    let y = start_point.1 as f64 + t * (end_point.1 as f64 - start_point.1 as f64);
+                    
+                    resampled_contour.push((x.round() as u32, y.round() as u32));
+                } else {
+                    resampled_contour.push(contour[segment_start_idx]);
+                }
+            }
+        }
+    }
+    
+    resampled_contour
 }

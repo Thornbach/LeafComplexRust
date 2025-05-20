@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{self, ErrorKind}; // Added missing import
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use crate::errors::{LeafComplexError, Result};
@@ -8,7 +8,7 @@ use crate::errors::{LeafComplexError, Result};
 /// Configuration for LeafComplexR
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    // Existing fields...
+
     pub input_path: String,
     pub output_base_dir: String,
     pub resize_dimensions: Option<[u32; 2]>,
@@ -17,7 +17,7 @@ pub struct Config {
     #[serde(default = "default_gui_resize")]
     pub gui_resize_dimensions: Option<[u32; 2]>,
     
-    // Other fields...
+
     pub opening_kernel_size: u32,
     pub marked_region_color_rgb: [u8; 3],
     pub reference_point_choice: ReferencePointChoice,
@@ -25,6 +25,9 @@ pub struct Config {
     pub golden_spiral_phi_exponent_factor: f64,
     #[serde(default = "default_parallel")]
     pub use_parallel: bool,
+    
+    #[serde(default = "default_resampled_contour_points")]
+    pub resampled_contour_points: usize,
 }
 
 /// Reference point choice enum
@@ -45,12 +48,16 @@ fn default_gui_resize() -> Option<[u32; 2]> {
     Some([512, 512])
 }
 
+// NEW: Default for contour resampling
+fn default_resampled_contour_points() -> usize {
+    100
+}
+
 impl Config {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let content = fs::read_to_string(path).map_err(|e| {
-            // Fixed this to avoid custom() which doesn't exist
             LeafComplexError::Config(format!("Failed to read config file '{}': {}", path.display(), e))
         })?;
 
@@ -69,13 +76,14 @@ impl Config {
             input_path: "./input".to_string(),
             output_base_dir: "./output".to_string(),
             resize_dimensions: Some([800, 600]),
-            gui_resize_dimensions: Some([512, 512]), // Default GUI resize to 512x512
+            gui_resize_dimensions: Some([512, 512]),
             opening_kernel_size: 5,
             marked_region_color_rgb: [255, 0, 255], // Bright pink
             reference_point_choice: ReferencePointChoice::Com,
             golden_spiral_rotation_steps: 36,
             golden_spiral_phi_exponent_factor,
             use_parallel: true,
+            resampled_contour_points: 100, // NEW: Default value
         }
     }
 
@@ -98,6 +106,13 @@ impl Config {
         if self.golden_spiral_phi_exponent_factor <= 0.0 {
             return Err(LeafComplexError::Config(
                 "golden_spiral_phi_exponent_factor must be > 0.0".to_string(),
+            ));
+        }
+
+        // NEW: Validate contour resampling parameter
+        if self.resampled_contour_points < 3 {
+            return Err(LeafComplexError::Config(
+                "resampled_contour_points must be >= 3".to_string(),
             ));
         }
 

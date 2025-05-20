@@ -106,7 +106,7 @@ impl GuiState {
             original_image: image,
             opened_image: None,
             marked_image: None,
-            kernel_size: 5, // Default
+            kernel_size: 33, // Default
             reference_point: None,
             lec_contour: Vec::new(),
             selected_point_idx: None,
