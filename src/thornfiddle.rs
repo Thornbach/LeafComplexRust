@@ -159,17 +159,6 @@ pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64]) -> f64 {
     }
 }
 
-/// Calculate spectral entropy for a set of features (with Z-score normalization)
-pub fn calculate_features_spectral_entropy(features: &[MarginalPointFeatures]) -> f64 {
-    // Extract Thornfiddle path values
-    let thornfiddle_paths: Vec<f64> = features
-        .iter()
-        .map(|feature| calculate_thornfiddle_path(feature))
-        .collect();
-    
-    // Calculate spectral entropy (now includes Z-score normalization internally)
-    calculate_spectral_entropy(&thornfiddle_paths)
-}
 
 /// Create Thornfiddle summary CSV with spectral entropy, circularity, and area
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
@@ -226,4 +215,76 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
     
     Ok(())
+}
+
+pub fn calculate_features_spectral_entropy(
+    features: &[MarginalPointFeatures],
+    smoothing_strength: f64
+) -> f64 {
+    // Extract Thornfiddle path values
+    let mut thornfiddle_paths: Vec<f64> = features
+        .iter()
+        .map(|feature| calculate_thornfiddle_path(feature))
+        .collect();
+    
+    // Apply smoothing if enabled
+    if smoothing_strength > 0.0 && thornfiddle_paths.len() > 1 {
+        // Convert smoothing strength to window size and sigma
+        // Window size should be odd
+        let window_size = (smoothing_strength * 2.0 + 1.0).round() as usize;
+        // Window size must be at least 3 for meaningful smoothing
+        let window_size = window_size.max(3);
+        let sigma = smoothing_strength * 0.5;
+        
+        thornfiddle_paths = apply_gaussian_smoothing(
+            &thornfiddle_paths, 
+            window_size, 
+            sigma
+        );
+    }
+    
+    // Calculate spectral entropy
+    calculate_spectral_entropy(&thornfiddle_paths)
+}
+
+fn apply_gaussian_smoothing(signal: &[f64], window_size: usize, sigma: f64) -> Vec<f64> {
+    if window_size <= 1 || signal.len() <= 1 || sigma <= 0.0 {
+        return signal.to_vec();
+    }
+    
+    let half_window = window_size / 2;
+    let mut smoothed = Vec::with_capacity(signal.len());
+    
+    // Create Gaussian kernel
+    let mut kernel = Vec::with_capacity(window_size);
+    let mut kernel_sum = 0.0;
+    
+    for i in 0..window_size {
+        let x = i as f64 - half_window as f64;
+        let weight = (-0.5 * (x / sigma).powi(2)).exp();
+        kernel.push(weight);
+        kernel_sum += weight;
+    }
+    
+    // Normalize kernel
+    for weight in &mut kernel {
+        *weight /= kernel_sum;
+    }
+    
+    // Apply convolution
+    for i in 0..signal.len() {
+        let mut value = 0.0;
+        
+        for j in 0..window_size {
+            let signal_idx = i as isize + j as isize - half_window as isize;
+            
+            if signal_idx >= 0 && signal_idx < signal.len() as isize {
+                value += signal[signal_idx as usize] * kernel[j];
+            }
+        }
+        
+        smoothed.push(value);
+    }
+    
+    smoothed
 }
