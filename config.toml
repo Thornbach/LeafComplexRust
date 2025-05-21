@@ -5,7 +5,7 @@ input_path = "./input"  # Path to a single image or a directory for batch proces
 output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will be created
 
 # Image Processing Parameters
-resize_dimensions = [1024, 1024]  # Optional [width, height] for batch processing
+resize_dimensions = [512, 512]  # Optional [width, height] for batch processing
 gui_resize_dimensions = [1024 , 1024]  # Optional [width, height] for GUI mode - speeds up analysis
 
 opening_kernel_size = 53  # Diameter/radius for the circular opening algorithm's structuring element
@@ -19,4 +19,4 @@ golden_spiral_phi_exponent_factor = 0.6366197723675814  # 2/π - Controls spiral
 # Parallel Processing
 use_parallel = true
 
-thornfiddle_smoothing_strength = 7.0  # Range: 0.0 (no smoothing) to 10.0 (strong smoothing)
+thornfiddle_smoothing_strength = 3.0  # Range: 0.0 (no smoothing) to 10.0 (strong smoothing)

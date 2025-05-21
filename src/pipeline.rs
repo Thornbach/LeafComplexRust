@@ -50,12 +50,13 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
+    // Get shape metrics early so we can use circularity for spectral entropy calculation
+    let (area, circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
+    
     // Save debug images if requested
     if debug {
         let debug_dir = PathBuf::from(&config.output_base_dir).join("debug");
         std::fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
-
-        
         
         // Save original, opened and marked images
         save_image(&processed_image, debug_dir.join(format!("{}_original.png", filename)))?;
@@ -148,21 +149,22 @@ pub fn process_image(
     write_lec_csv(&lec_features, &config.output_base_dir, &filename)?;
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename)?;
 
-    let (area, circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
-
+    // Use the shape-aware spectral entropy calculation with circularity
     let spectral_entropy = thornfiddle::calculate_features_spectral_entropy(
         &lmc_features,
-        config.thornfiddle_smoothing_strength
+        config.thornfiddle_smoothing_strength,
+        circularity  // Pass circularity to improve spectral entropy calculation
     );
     
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
-        subfolder,  // Pass the subfolder parameter
+        subfolder,
         spectral_entropy,
         circularity,
         area
     )?;
+    
     // Debug output
     if debug {
         println!("Thornfiddle analysis completed:");

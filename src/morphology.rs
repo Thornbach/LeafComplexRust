@@ -651,3 +651,32 @@ pub fn resample_contour(contour: &[(u32, u32)], target_points: usize) -> Vec<(u3
     
     resampled_contour
 }
+
+/// Smooth contour points to reduce digitization artifacts
+pub fn smooth_contour(contour: &[(u32, u32)], smoothing_strength: usize) -> Vec<(u32, u32)> {
+    if contour.len() <= 3 || smoothing_strength == 0 {
+        return contour.to_vec();
+    }
+    
+    let mut smoothed = Vec::with_capacity(contour.len());
+    let window_size = std::cmp::min(smoothing_strength * 2 + 1, contour.len());
+    let half_window = window_size / 2;
+    
+    for i in 0..contour.len() {
+        let mut sum_x = 0.0;
+        let mut sum_y = 0.0;
+        let mut count = 0;
+        
+        for j in 0..window_size {
+            let idx = (i + j + contour.len() - half_window) % contour.len();
+            sum_x += contour[idx].0 as f64;
+            sum_y += contour[idx].1 as f64;
+            count += 1;
+        }
+        
+        smoothed.push(((sum_x / count as f64).round() as u32, 
+                       (sum_y / count as f64).round() as u32));
+    }
+    
+    smoothed
+}

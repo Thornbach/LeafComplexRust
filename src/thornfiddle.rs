@@ -62,7 +62,52 @@ fn z_score_normalize(values: &[f64]) -> Vec<f64> {
     }
 }
 
-pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64]) -> f64 {
+/// Preprocess thornfiddle paths to handle simple shapes better
+pub fn preprocess_thornfiddle_paths(paths: &[f64], circularity: f64) -> Vec<f64> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    
+    // Calculate basic statistics
+    let mean = paths.iter().sum::<f64>() / paths.len() as f64;
+    let variance = paths.iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f64>() / paths.len() as f64;
+    let std_dev = variance.sqrt();
+    
+    // Check if the shape is very simple (circle-like) based on circularity
+    let is_simple_shape = circularity > 0.85;
+    
+    // For simple shapes, reduce the variance significantly
+    if is_simple_shape {
+        // For circle-like shapes, strongly equalize the signal
+        // This prevents amplification of tiny variations in simple shapes
+        let reduction_factor = 1.0 - ((circularity - 0.85) / 0.15).min(1.0) * 0.95;
+        
+        paths.iter()
+            .map(|&x| mean + (x - mean) * reduction_factor)
+            .collect()
+    } else {
+        // For non-simple shapes, apply moderate conditioning
+        // Remove extreme outliers that could artificially inflate entropy
+        paths.iter()
+            .map(|&x| {
+                if std_dev > 1e-10 {
+                    let z_score = (x - mean) / std_dev;
+                    if z_score.abs() > 3.0 {
+                        mean + 3.0 * std_dev * z_score.signum()
+                    } else {
+                        x
+                    }
+                } else {
+                    x
+                }
+            })
+            .collect()
+    }
+}
+
+pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64], circularity: f64) -> f64 {
     if thornfiddle_paths.len() < 4 {
         // Not enough data points for meaningful spectral analysis
         return 0.0;
@@ -70,17 +115,23 @@ pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64]) -> f64 {
 
     let original_len = thornfiddle_paths.len();
 
-    // NEW: Apply Z-score normalization first (focuses on pattern, not magnitude)
-    let normalized_paths = z_score_normalize(thornfiddle_paths);
+    // Preprocess paths based on shape properties
+    let preprocessed_paths = preprocess_thornfiddle_paths(thornfiddle_paths, circularity);
+    
+    // Apply Z-score normalization with care
+    let normalized_paths = z_score_normalize(&preprocessed_paths);
 
-    // 1. Detrend (remove mean) - This will have minimal effect after Z-scoring
+    // 1. Detrend (remove mean)
     let mean: f64 = normalized_paths.iter().sum::<f64>() / original_len as f64;
     let mut processed_series: Vec<f64> = normalized_paths.iter().map(|&x| x - mean).collect();
 
     // 2. Apply Hann Window to the actual data
+    // For simple shapes (high circularity), use a gentler window
+    let window_factor = if circularity > 0.85 { 0.25 } else { 0.5 };
+    
     if original_len > 1 {
         for i in 0..original_len {
-            let hann_factor = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (original_len - 1) as f64).cos());
+            let hann_factor = window_factor * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (original_len - 1) as f64).cos());
             processed_series[i] *= hann_factor;
         }
     } else if original_len == 1 {
@@ -155,16 +206,25 @@ pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64]) -> f64 {
     if max_entropy <= 1e-10 {
         entropy
     } else {
-        entropy / max_entropy
+        // For circle-like shapes, apply additional scaling to reduce entropy
+        let final_entropy = entropy / max_entropy;
+        
+        if circularity > 0.85 {
+            // Apply exponential reduction based on circularity
+            // This ensures circles have very low entropy
+            let reduction_factor = ((circularity - 0.85) / 0.15).min(1.0);
+            final_entropy * (1.0 - reduction_factor * 0.9)
+        } else {
+            final_entropy
+        }
     }
 }
-
 
 /// Create Thornfiddle summary CSV with spectral entropy, circularity, and area
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
-    subfolder: &str,  // New parameter for subfolder
+    subfolder: &str,
     spectral_entropy: f64,
     circularity: f64,
     area: u32,
@@ -190,10 +250,10 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header only for new file - added "Subfolder" column
+        // Write header only for new file
         writer.write_record(&[
             "ID",
-            "Subfolder",  // New column
+            "Subfolder",
             "Spectral_Entropy",
             "Circularity",
             "Area",
@@ -202,10 +262,10 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         writer
     };
     
-    // Write data - now including subfolder
+    // Write data
     writer.write_record(&[
         filename,
-        subfolder,  // Include subfolder in record
+        subfolder,
         &format!("{:.6}", spectral_entropy),
         &format!("{:.6}", circularity),
         &area.to_string(),
@@ -219,7 +279,8 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
 
 pub fn calculate_features_spectral_entropy(
     features: &[MarginalPointFeatures],
-    smoothing_strength: f64
+    smoothing_strength: f64,
+    circularity: f64
 ) -> f64 {
     // Extract Thornfiddle path values
     let mut thornfiddle_paths: Vec<f64> = features
@@ -243,8 +304,8 @@ pub fn calculate_features_spectral_entropy(
         );
     }
     
-    // Calculate spectral entropy
-    calculate_spectral_entropy(&thornfiddle_paths)
+    // Calculate spectral entropy with shape awareness
+    calculate_spectral_entropy(&thornfiddle_paths, circularity)
 }
 
 fn apply_gaussian_smoothing(signal: &[f64], window_size: usize, sigma: f64) -> Vec<f64> {
