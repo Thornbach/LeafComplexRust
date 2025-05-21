@@ -26,8 +26,8 @@ pub struct Config {
     #[serde(default = "default_parallel")]
     pub use_parallel: bool,
     
-    #[serde(default = "default_resampled_contour_points")]
-    pub resampled_contour_points: usize,
+    #[serde(default = "default_thornfiddle_smoothing_strength")]
+    pub thornfiddle_smoothing_strength: f64,
 }
 
 /// Reference point choice enum
@@ -48,9 +48,9 @@ fn default_gui_resize() -> Option<[u32; 2]> {
     Some([512, 512])
 }
 
-// NEW: Default for contour resampling
-fn default_resampled_contour_points() -> usize {
-    100
+
+fn default_thornfiddle_smoothing_strength() -> f64 {
+    1.0 // Range: 0.0 (no smoothing) to 10.0 (strong smoothing)
 }
 
 impl Config {
@@ -83,7 +83,7 @@ impl Config {
             golden_spiral_rotation_steps: 36,
             golden_spiral_phi_exponent_factor,
             use_parallel: true,
-            resampled_contour_points: 100, // NEW: Default value
+            thornfiddle_smoothing_strength: 1.0,
         }
     }
 
@@ -109,12 +109,6 @@ impl Config {
             ));
         }
 
-        // NEW: Validate contour resampling parameter
-        if self.resampled_contour_points < 3 {
-            return Err(LeafComplexError::Config(
-                "resampled_contour_points must be >= 3".to_string(),
-            ));
-        }
 
         // Create output directories if they don't exist
         let base_dir = PathBuf::from(&self.output_base_dir);
