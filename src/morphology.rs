@@ -1,5 +1,6 @@
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::cmp::{max, min};
+use std::collections::{HashMap, VecDeque};
 use rayon::prelude::*;
 
 use crate::errors::{LeafComplexError, Result};
@@ -251,6 +252,324 @@ pub fn mark_opened_regions(
         
     marked
 }
+
+/// Find all connected components in an image
+/// Returns a vector of component sizes and a map of pixel coordinates to component IDs
+fn find_connected_components(image: &RgbaImage, pink_color: [u8; 3]) -> (Vec<usize>, HashMap<(u32, u32), u32>) {
+    let (width, height) = image.dimensions();
+    let mut visited = vec![false; (width * height) as usize];
+    let mut component_map = HashMap::new();
+    let mut component_sizes = Vec::new();
+    let mut component_id = 0u32;
+    
+    // 8-connected neighbors
+    let directions = [
+        (0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)
+    ];
+    
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) as usize;
+            
+            if visited[idx] {
+                continue;
+            }
+            
+            let pixel = image.get_pixel(x, y);
+            
+            // Check if this pixel should be considered (non-transparent and not pink)
+            if pixel[3] > 0 && !has_rgb_color(pixel, pink_color) {
+                // Start a new connected component
+                let mut queue = VecDeque::new();
+                let mut component_pixels = Vec::new();
+                
+                queue.push_back((x, y));
+                visited[idx] = true;
+                
+                // BFS to find all connected pixels
+                while let Some((cx, cy)) = queue.pop_front() {
+                    component_pixels.push((cx, cy));
+                    component_map.insert((cx, cy), component_id);
+                    
+                    // Check all 8 neighbors
+                    for &(dx, dy) in &directions {
+                        let nx = cx as i32 + dx;
+                        let ny = cy as i32 + dy;
+                        
+                        if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                            continue;
+                        }
+                        
+                        let nx = nx as u32;
+                        let ny = ny as u32;
+                        let nidx = (ny * width + nx) as usize;
+                        
+                        if visited[nidx] {
+                            continue;
+                        }
+                        
+                        let npixel = image.get_pixel(nx, ny);
+                        if npixel[3] > 0 && !has_rgb_color(npixel, pink_color) {
+                            queue.push_back((nx, ny));
+                            visited[nidx] = true;
+                        }
+                    }
+                }
+                
+                component_sizes.push(component_pixels.len());
+                component_id += 1;
+            }
+        }
+    }
+    
+    (component_sizes, component_map)
+}
+
+/// Remove small connected components based on size threshold
+fn filter_small_components(
+    image: &RgbaImage, 
+    component_sizes: &[usize], 
+    component_map: &HashMap<(u32, u32), u32>,
+    min_size_threshold: usize
+) -> RgbaImage {
+    let (width, height) = image.dimensions();
+    let mut filtered_image = RgbaImage::new(width, height);
+    
+    // Initialize with transparent pixels
+    for y in 0..height {
+        for x in 0..width {
+            filtered_image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+        }
+    }
+    
+    // Copy pixels from components that are large enough
+    for y in 0..height {
+        for x in 0..width {
+            if let Some(&component_id) = component_map.get(&(x, y)) {
+                let component_size = component_sizes[component_id as usize];
+                
+                if component_size >= min_size_threshold {
+                    // Keep this pixel
+                    filtered_image.put_pixel(x, y, *image.get_pixel(x, y));
+                }
+            }
+        }
+    }
+    
+    filtered_image
+}
+
+/// Keep only the largest connected component
+fn keep_largest_component(
+    image: &RgbaImage, 
+    component_sizes: &[usize], 
+    component_map: &HashMap<(u32, u32), u32>
+) -> RgbaImage {
+    let (width, height) = image.dimensions();
+    let mut filtered_image = RgbaImage::new(width, height);
+    
+    // Initialize with transparent pixels
+    for y in 0..height {
+        for x in 0..width {
+            filtered_image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+        }
+    }
+    
+    // Find the largest component
+    if let Some((largest_component_id, _)) = component_sizes.iter()
+        .enumerate()
+        .max_by_key(|(_, &size)| size) {
+        
+        // Copy pixels from the largest component only
+        for y in 0..height {
+            for x in 0..width {
+                if let Some(&component_id) = component_map.get(&(x, y)) {
+                    if component_id == largest_component_id as u32 {
+                        filtered_image.put_pixel(x, y, *image.get_pixel(x, y));
+                    }
+                }
+            }
+        }
+    }
+    
+    filtered_image
+}
+
+/// Apply additional morphological cleaning to remove thin connections and shells
+fn clean_thin_artifacts(image: &RgbaImage, pink_color: [u8; 3]) -> RgbaImage {
+    let (width, height) = image.dimensions();
+    
+    // Step 1: Apply a small erosion to break thin connections (2-pixel radius)
+    let small_kernel = create_circular_kernel(3); // 3x3 kernel to break 1-2 pixel connections
+    let mut eroded = RgbaImage::new(width, height);
+    
+    let (k_width, k_height) = small_kernel.dimensions();
+    let k_radius_x = (k_width / 2) as i32;
+    let k_radius_y = (k_height / 2) as i32;
+    
+    // Create kernel lookup
+    let mut kernel_pixels = vec![false; (k_width * k_height) as usize];
+    for ky in 0..k_height {
+        for kx in 0..k_width {
+            if small_kernel.get_pixel(kx, ky)[0] > 0 {
+                kernel_pixels[(ky * k_width + kx) as usize] = true;
+            }
+        }
+    }
+    
+    // Apply erosion
+    for y in 0..height {
+        for x in 0..width {
+            let original = image.get_pixel(x, y);
+            
+            if original[3] < ALPHA_THRESHOLD || has_rgb_color(original, pink_color) {
+                eroded.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+                continue;
+            }
+            
+            let mut erode = false;
+            'kernel_check: for ky in 0..k_height {
+                for kx in 0..k_width {
+                    if kernel_pixels[(ky * k_width + kx) as usize] {
+                        let img_x = x as i32 + (kx as i32) - k_radius_x;
+                        let img_y = y as i32 + (ky as i32) - k_radius_y;
+                        
+                        if img_x < 0 || img_y < 0 || img_x >= width as i32 || img_y >= height as i32 {
+                            erode = true;
+                            break 'kernel_check;
+                        }
+                        
+                        let check_pixel = image.get_pixel(img_x as u32, img_y as u32);
+                        if check_pixel[3] < ALPHA_THRESHOLD || has_rgb_color(check_pixel, pink_color) {
+                            erode = true;
+                            break 'kernel_check;
+                        }
+                    }
+                }
+            }
+            
+            if erode {
+                eroded.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            } else {
+                eroded.put_pixel(x, y, *original);
+            }
+        }
+    }
+    
+    // Step 2: Find connected components after erosion
+    let (component_sizes, component_map) = find_connected_components(&eroded, pink_color);
+    
+    // Step 3: Keep only the largest component
+    let largest_only = keep_largest_component(&eroded, &component_sizes, &component_map);
+    
+    // Step 4: Apply a small dilation to restore size (1-pixel radius)
+    let restore_kernel = create_circular_kernel(3); // Same size to restore
+    let mut dilated = RgbaImage::new(width, height);
+    
+    for y in 0..height {
+        for x in 0..width {
+            let mut dilate = false;
+            
+            'kernel_check: for ky in 0..k_height {
+                for kx in 0..k_width {
+                    if kernel_pixels[(ky * k_width + kx) as usize] {
+                        let img_x = x as i32 + (kx as i32) - k_radius_x;
+                        let img_y = y as i32 + (ky as i32) - k_radius_y;
+                        
+                        if img_x >= 0 && img_y >= 0 && img_x < width as i32 && img_y < height as i32 {
+                            let check_pixel = largest_only.get_pixel(img_x as u32, img_y as u32);
+                            if check_pixel[3] >= ALPHA_THRESHOLD && !has_rgb_color(check_pixel, pink_color) {
+                                dilate = true;
+                                break 'kernel_check;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if dilate {
+                // Use the original pixel color from the input image
+                let orig_pixel = image.get_pixel(x, y);
+                if orig_pixel[3] > 0 && !has_rgb_color(orig_pixel, pink_color) {
+                    dilated.put_pixel(x, y, *orig_pixel);
+                } else {
+                    dilated.put_pixel(x, y, Rgba([128, 128, 128, 255])); // Fallback gray
+                }
+            } else {
+                dilated.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            }
+        }
+    }
+    
+    dilated
+}
+
+/// Improved LMC creation with thin artifact removal
+pub fn create_lmc_with_com_component(
+    processed_image: &RgbaImage, 
+    marked_image: &mut RgbaImage, 
+    pink_color: [u8; 3]
+) -> RgbaImage {
+    let (width, height) = processed_image.dimensions();
+    
+    // First, calculate the center of mass
+    let (com_x, com_y) = calculate_center_of_mass(processed_image)
+        .unwrap_or((width / 2, height / 2)); // Fallback to center if calculation fails
+    
+    println!("Center of Mass: ({}, {})", com_x, com_y);
+    
+    // Create a version of the image with pink pixels made transparent
+    let mut temp_image = marked_image.clone();
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = temp_image.get_pixel_mut(x, y);
+            if has_rgb_color(pixel, pink_color) {
+                *pixel = image::Rgba([0, 0, 0, 0]);
+            }
+        }
+    }
+    
+    // NEW: Apply morphological cleaning to remove thin artifacts
+    println!("Cleaning thin artifacts...");
+    let cleaned_image = clean_thin_artifacts(&temp_image, pink_color);
+    
+    // Find connected components in the cleaned image
+    let (component_sizes, component_map) = find_connected_components(&cleaned_image, pink_color);
+    
+    println!("Found {} connected components after cleaning", component_sizes.len());
+    
+    // Calculate size threshold (e.g., components must be at least 0.5% of image area)
+    let total_pixels = (width * height) as usize;
+    let min_size_threshold = (total_pixels as f64 * 0.005).max(50.0) as usize; // Reduced to 0.5% since we've already cleaned
+    
+    // Apply size-based filtering
+    let size_filtered = filter_small_components(&cleaned_image, &component_sizes, &component_map, min_size_threshold);
+    
+    // Keep only the largest remaining component
+    let (final_component_sizes, final_component_map) = find_connected_components(&size_filtered, pink_color);
+    let lmc_image = keep_largest_component(&size_filtered, &final_component_sizes, &final_component_map);
+    
+    println!("After cleaning and filtering: {} components, keeping largest with {} pixels", 
+             final_component_sizes.len(),
+             final_component_sizes.iter().max().unwrap_or(&0));
+    
+    // Update marking: If pixel is in original but not in final LMC, mark it pink
+    for y in 0..height {
+        for x in 0..width {
+            let orig_pixel = processed_image.get_pixel(x, y);
+            let lmc_pixel = lmc_image.get_pixel(x, y);
+            
+            // If pixel is non-transparent in original but transparent in LMC
+            if orig_pixel[3] > 0 && lmc_pixel[3] == 0 {
+                // Mark it pink in the marked image
+                marked_image.put_pixel(x, y, image::Rgba([pink_color[0], pink_color[1], pink_color[2], orig_pixel[3]]));
+            }
+        }
+    }
+    
+    lmc_image
+}
+
 /// Direction vectors for Moore-Neighbor contour tracing
 static MOORE_NEIGHBORHOOD: [(i32, i32); 8] = [
     (1, 0),   // right
@@ -410,107 +729,6 @@ pub fn trace_contour(image: &RgbaImage, is_pink_opaque: bool, pink_color: [u8; 3
     
     // Return the traced contour
     contour
-}
-
-pub fn create_lmc_with_com_component(
-    processed_image: &RgbaImage, 
-    marked_image: &mut RgbaImage, 
-    pink_color: [u8; 3]
-) -> RgbaImage {
-    let (width, height) = processed_image.dimensions();
-    
-    // First, calculate the center of mass
-    let (com_x, com_y) = calculate_center_of_mass(processed_image)
-        .unwrap_or((width / 2, height / 2)); // Fallback to center if calculation fails
-    
-    println!("Center of Mass: ({}, {})", com_x, com_y);
-    
-    // Create a version of the image with pink pixels made transparent
-    let mut temp_image = marked_image.clone();
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = temp_image.get_pixel_mut(x, y);
-            if has_rgb_color(pixel, pink_color) {
-                *pixel = image::Rgba([0, 0, 0, 0]);
-            }
-        }
-    }
-    
-    // Create result image (initially all transparent)
-    let mut lmc_image = RgbaImage::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            lmc_image.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
-        }
-    }
-    
-    // Flood fill from COM to find the connected component
-    let mut visited = vec![false; (width * height) as usize];
-    let mut queue = std::collections::VecDeque::new();
-    let mut com_component = Vec::new();
-    
-    // Start from COM
-    queue.push_back((com_x, com_y));
-    visited[(com_y * width + com_x) as usize] = true;
-    
-    // 8-connected neighbors
-    let directions = [
-        (0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)
-    ];
-    
-    // Flood fill
-    while let Some((cx, cy)) = queue.pop_front() {
-        let idx = (cy * width + cx) as usize;
-        
-        // Add to component
-        com_component.push((cx, cy));
-        
-        // Copy pixel to LMC image
-        lmc_image.put_pixel(cx, cy, *temp_image.get_pixel(cx, cy));
-        
-        // Check neighbors
-        for &(dx, dy) in &directions {
-            let nx = cx as i32 + dx;
-            let ny = cy as i32 + dy;
-            
-            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
-                continue;
-            }
-            
-            let nx = nx as u32;
-            let ny = ny as u32;
-            let nidx = (ny * width + nx) as usize;
-            
-            if visited[nidx] {
-                continue;
-            }
-            
-            let npixel = temp_image.get_pixel(nx, ny);
-            if npixel[3] > 0 {
-                // Non-transparent pixel
-                queue.push_back((nx, ny));
-                visited[nidx] = true;
-            }
-        }
-    }
-    
-    println!("COM component has {} pixels", com_component.len());
-    
-    // Update marking: If pixel is in original but not in COM component, mark it pink
-    for y in 0..height {
-        for x in 0..width {
-            let orig_pixel = processed_image.get_pixel(x, y);
-            let lmc_pixel = lmc_image.get_pixel(x, y);
-            
-            // If pixel is non-transparent in original but transparent in LMC
-            if orig_pixel[3] > 0 && lmc_pixel[3] == 0 {
-                // Mark it pink in the marked image
-                marked_image.put_pixel(x, y, image::Rgba([pink_color[0], pink_color[1], pink_color[2], orig_pixel[3]]));
-            }
-        }
-    }
-    
-    lmc_image
 }
 
 /// Calculate the Center of Mass (COM) - adapted from your existing code

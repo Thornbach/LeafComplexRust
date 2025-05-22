@@ -156,7 +156,7 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
-    // Calculate spectral entropy with the DiegoPath-enhanced method
+    // Calculate all three types of spectral entropy
     let spectral_entropy = thornfiddle::calculate_contour_spectral_entropy(
         &raw_contour,
         &lmc_features, // Pass the actual features with DiegoPath information
@@ -164,12 +164,28 @@ pub fn process_image(
         config.thornfiddle_interpolation_points
     );
     
-    // Create basic summary
+    let sp_entropy = thornfiddle::calculate_straightpath_entropy(
+        &raw_contour,
+        &lmc_features,
+        circularity,
+        config.thornfiddle_interpolation_points
+    );
+    
+    let dp_entropy = thornfiddle::calculate_diegopath_entropy(
+        &raw_contour,
+        &lmc_features,
+        circularity,
+        config.thornfiddle_interpolation_points
+    );
+    
+    // Create basic summary with all three entropy values
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
         subfolder,
         spectral_entropy,
+        sp_entropy,
+        dp_entropy,
         circularity,
         area
     )?;
@@ -197,7 +213,9 @@ pub fn process_image(
         )?;
         
         println!("DiegoPath-Enhanced Spectral Analysis completed:");
-        println!("  Spectral Entropy: {:.6}", spectral_entropy);
+        println!("  Thornfiddle Spectral Entropy: {:.6}", spectral_entropy);
+        println!("  StraightPath Entropy: {:.6}", sp_entropy);
+        println!("  DiegoPath Entropy: {:.6}", dp_entropy);
         println!("  Circularity: {:.6}", circularity);
         println!("  Area: {} pixels", area);
         println!("  Contour Points: {}", raw_contour.len());
