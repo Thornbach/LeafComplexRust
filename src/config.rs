@@ -1,3 +1,5 @@
+// Updated Config struct in src/config.rs
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, ErrorKind};
@@ -28,6 +30,10 @@ pub struct Config {
     
     #[serde(default = "default_thornfiddle_smoothing_strength")]
     pub thornfiddle_smoothing_strength: f64,
+    
+    // New parameter for spectral analysis
+    #[serde(default = "default_thornfiddle_interpolation_points")]
+    pub thornfiddle_interpolation_points: usize,
 }
 
 /// Reference point choice enum
@@ -48,9 +54,13 @@ fn default_gui_resize() -> Option<[u32; 2]> {
     Some([512, 512])
 }
 
-
 fn default_thornfiddle_smoothing_strength() -> f64 {
     1.0 // Range: 0.0 (no smoothing) to 10.0 (strong smoothing)
+}
+
+// New default function for interpolation points
+fn default_thornfiddle_interpolation_points() -> usize {
+    1000 // Default to 1000 points for consistent analysis
 }
 
 impl Config {
@@ -84,6 +94,7 @@ impl Config {
             golden_spiral_phi_exponent_factor,
             use_parallel: true,
             thornfiddle_smoothing_strength: 1.0,
+            thornfiddle_interpolation_points: 1000,
         }
     }
 
@@ -108,12 +119,19 @@ impl Config {
                 "golden_spiral_phi_exponent_factor must be > 0.0".to_string(),
             ));
         }
-
+        
+        // Validate thornfiddle parameters
+        if self.thornfiddle_interpolation_points < 10 {
+            return Err(LeafComplexError::Config(
+                "thornfiddle_interpolation_points must be >= 10".to_string(),
+            ));
+        }
 
         // Create output directories if they don't exist
         let base_dir = PathBuf::from(&self.output_base_dir);
         let lec_dir = base_dir.join("LEC");
         let lmc_dir = base_dir.join("LMC");
+        let thornfiddle_dir = base_dir.join("Thornfiddle");
 
         fs::create_dir_all(&lec_dir).map_err(|e| {
             LeafComplexError::Io(io::Error::new(
@@ -126,6 +144,13 @@ impl Config {
             LeafComplexError::Io(io::Error::new(
                 ErrorKind::Other,
                 format!("Failed to create LMC output directory: {}", e),
+            ))
+        })?;
+        
+        fs::create_dir_all(&thornfiddle_dir).map_err(|e| {
+            LeafComplexError::Io(io::Error::new(
+                ErrorKind::Other,
+                format!("Failed to create Thornfiddle output directory: {}", e),
             ))
         })?;
 

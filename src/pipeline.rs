@@ -5,7 +5,7 @@ use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::generate_features;
 use crate::image_io::{InputImage, save_image};
 use crate::image_utils::resize_image;
-use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
+use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, resample_contour, smooth_contour, create_lmc_with_com_component};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
 use crate::path_algorithms::calculate_clr_regions;
@@ -150,12 +150,21 @@ pub fn process_image(
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename)?;
 
     // Use the shape-aware spectral entropy calculation with circularity
-    let spectral_entropy = thornfiddle::calculate_features_spectral_entropy(
-        &lmc_features,
-        config.thornfiddle_smoothing_strength,
-        circularity  // Pass circularity to improve spectral entropy calculation
+    let raw_contour = trace_contour(
+        &marked_image,
+        false, // Use non-pink regions
+        config.marked_region_color_rgb
     );
     
+    // Calculate spectral entropy with the DiegoPath-enhanced method
+    let spectral_entropy = thornfiddle::calculate_contour_spectral_entropy(
+        &raw_contour,
+        &lmc_features, // Pass the actual features with DiegoPath information
+        circularity,
+        config.thornfiddle_interpolation_points
+    );
+    
+    // Create basic summary
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
@@ -165,13 +174,34 @@ pub fn process_image(
         area
     )?;
     
-    // Debug output
+    // Add detailed debug output if debug mode is enabled
     if debug {
-        println!("Thornfiddle analysis completed:");
+        // Generate detailed DiegoPath analysis
+        thornfiddle::debug_diegopath_analysis(
+            &raw_contour,
+            &lmc_features,
+            &filename,
+            &PathBuf::from(&config.output_base_dir),
+            circularity,
+            config.thornfiddle_interpolation_points
+        )?;
+        
+        // Basic debug for features
+        thornfiddle::debug_thornfiddle_values(
+            &lmc_features,
+            &filename,
+            &PathBuf::from(&config.output_base_dir),
+            circularity,
+            area,
+            config.thornfiddle_interpolation_points
+        )?;
+        
+        println!("DiegoPath-Enhanced Spectral Analysis completed:");
         println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Circularity: {:.6}", circularity);
         println!("  Area: {} pixels", area);
+        println!("  Contour Points: {}", raw_contour.len());
+        println!("  Feature Points: {}", lmc_features.len());
     }
-    
     Ok(())
 }

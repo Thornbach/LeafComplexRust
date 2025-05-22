@@ -1,4 +1,4 @@
-// src/thornfiddle.rs - Thornfiddle complexity analysis for leaf morphology
+// src/thornfiddle.rs - DiegoPath-Enhanced Spectral Entropy
 
 use std::path::Path;
 use std::fs;
@@ -7,220 +7,314 @@ use csv::Writer;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::MarginalPointFeatures;
-use crate::image_utils::is_non_transparent;
+use crate::morphology::{trace_contour, resample_contour, smooth_contour};
 
-/// Calculate the Thornfiddle Multiplier for a given feature point
+/// Calculate a more aggressive Thornfiddle Multiplier that better captures complexity
 pub fn calculate_thornfiddle_multiplier(feature: &MarginalPointFeatures) -> f64 {
     // Skip calculation if DiegoPath or StraightPath is invalid
     if feature.straight_path_length <= 0.0 || feature.diego_path_length <= 0.0 {
         return 1.0;
     }
     
-    // Calculate Path_Complexity using hyperbolic tangent
+    // Calculate path deviations - how much the path deviates from straight line
     let path_ratio = feature.diego_path_length / feature.straight_path_length;
-    let path_complexity = ((path_ratio - 1.0) * 3.0).tanh();
     
-    // Calculate Region_Factor with square root
+    // Use exponential scaling to amplify differences
+    // This will create much stronger separation between simple and complex leaves
+    let path_complexity = ((path_ratio - 1.0) * 4.0).exp() - 1.0;
+    
+    // Apply upper limit to avoid extreme values
+    let path_complexity = path_complexity.min(15.0);
+    
+    // Calculate Region_Factor based on transparent vs non-transparent regions
+    // This captures how much the path has to navigate around transparent areas
     let clr_sum = (feature.clr_alpha + feature.clr_gamma) as f64;
-    let denominator = feature.straight_path_length.powi(2) + 1.0;
-    let region_factor = (clr_sum / denominator).sqrt();
+    let denominator = feature.straight_path_length + 1.0;
+    let region_factor = (clr_sum / denominator).sqrt() * 2.0; // Amplify region factor
     
-    // Calculate final multiplier
-    1.0 + path_complexity * (1.0 + region_factor)
+    // Calculate final multiplier with increased sensitivity
+    let multiplier = 1.0 + path_complexity * (1.0 + region_factor);
+    
+    // Apply non-linear scaling to further separate simple from complex
+    multiplier.powf(1.2)
 }
 
-/// Calculate Thornfiddle Path for a feature (DiegoPath * Multiplier)
+/// Calculate enhanced Thornfiddle Path
 pub fn calculate_thornfiddle_path(feature: &MarginalPointFeatures) -> f64 {
     let multiplier = calculate_thornfiddle_multiplier(feature);
     feature.diego_path_length * multiplier
 }
 
-/// Apply Z-score normalization to a vector of values
-/// Returns the Z-scored values (mean=0, std=1) or zeros if std=0
-fn z_score_normalize(values: &[f64]) -> Vec<f64> {
-    if values.is_empty() {
+/// Extract contour signature with DiegoPath weighting
+fn extract_diegopath_weighted_signature(
+    contour: &[(u32, u32)],
+    features: &[MarginalPointFeatures],
+    interpolation_points: usize
+) -> Vec<f64> {
+    // First, check if we have enough contour points and features
+    if contour.len() < 8 || features.is_empty() {
         return Vec::new();
     }
     
-    // Calculate mean
-    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    // Resample contour to fixed number of points
+    let resampled = resample_contour(contour, interpolation_points);
     
-    // Calculate standard deviation
-    let variance = values.iter()
-        .map(|&x| (x - mean).powi(2))
-        .sum::<f64>() / values.len() as f64;
-    let std_dev = variance.sqrt();
+    // Calculate centroid (for reference)
+    let n = resampled.len() as f64;
+    let sum_x: f64 = resampled.iter().map(|&(x, _)| x as f64).sum();
+    let sum_y: f64 = resampled.iter().map(|&(_, y)| y as f64).sum();
     
-    // Apply Z-score normalization
-    if std_dev > 1e-10 { // Use small epsilon to avoid division by zero
-        values.iter()
-            .map(|&x| (x - mean) / std_dev)
-            .collect()
-    } else {
-        // If standard deviation is essentially zero, return zeros
-        vec![0.0; values.len()]
-    }
-}
-
-/// Preprocess thornfiddle paths to handle simple shapes better
-pub fn preprocess_thornfiddle_paths(paths: &[f64], circularity: f64) -> Vec<f64> {
-    if paths.is_empty() {
-        return Vec::new();
-    }
+    let centroid_x = sum_x / n;
+    let centroid_y = sum_y / n;
     
-    // Calculate basic statistics
-    let mean = paths.iter().sum::<f64>() / paths.len() as f64;
-    let variance = paths.iter()
-        .map(|&x| (x - mean).powi(2))
-        .sum::<f64>() / paths.len() as f64;
-    let std_dev = variance.sqrt();
+    // Calculate basic distance signature
+    let mut distances: Vec<f64> = resampled.iter()
+        .map(|&(x, y)| {
+            let dx = x as f64 - centroid_x;
+            let dy = y as f64 - centroid_y;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .collect();
     
-    // Check if the shape is very simple (circle-like) based on circularity
-    let is_simple_shape = circularity > 0.85;
-    
-    // For simple shapes, reduce the variance significantly
-    if is_simple_shape {
-        // For circle-like shapes, strongly equalize the signal
-        // This prevents amplification of tiny variations in simple shapes
-        let reduction_factor = 1.0 - ((circularity - 0.85) / 0.15).min(1.0) * 0.95;
-        
-        paths.iter()
-            .map(|&x| mean + (x - mean) * reduction_factor)
-            .collect()
-    } else {
-        // For non-simple shapes, apply moderate conditioning
-        // Remove extreme outliers that could artificially inflate entropy
-        paths.iter()
-            .map(|&x| {
-                if std_dev > 1e-10 {
-                    let z_score = (x - mean) / std_dev;
-                    if z_score.abs() > 3.0 {
-                        mean + 3.0 * std_dev * z_score.signum()
-                    } else {
-                        x
-                    }
-                } else {
-                    x
-                }
-            })
-            .collect()
-    }
-}
-
-pub fn calculate_spectral_entropy(thornfiddle_paths: &[f64], circularity: f64) -> f64 {
-    if thornfiddle_paths.len() < 4 {
-        // Not enough data points for meaningful spectral analysis
-        return 0.0;
-    }
-
-    let original_len = thornfiddle_paths.len();
-
-    // Preprocess paths based on shape properties
-    let preprocessed_paths = preprocess_thornfiddle_paths(thornfiddle_paths, circularity);
-    
-    // Apply Z-score normalization with care
-    let normalized_paths = z_score_normalize(&preprocessed_paths);
-
-    // 1. Detrend (remove mean)
-    let mean: f64 = normalized_paths.iter().sum::<f64>() / original_len as f64;
-    let mut processed_series: Vec<f64> = normalized_paths.iter().map(|&x| x - mean).collect();
-
-    // 2. Apply Hann Window to the actual data
-    // For simple shapes (high circularity), use a gentler window
-    let window_factor = if circularity > 0.85 { 0.25 } else { 0.5 };
-    
-    if original_len > 1 {
-        for i in 0..original_len {
-            let hann_factor = window_factor * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (original_len - 1) as f64).cos());
-            processed_series[i] *= hann_factor;
+    // Normalize by average radius
+    let avg_radius = distances.iter().sum::<f64>() / n;
+    if avg_radius > 0.0 {
+        for d in &mut distances {
+            *d /= avg_radius;
         }
-    } else if original_len == 1 {
-        processed_series[0] = 0.0;
     }
+    
+    // Now enhance the signature using DiegoPath information
+    // Calculate the average DiegoPath/StraightPath ratio
+    let avg_ratio = features.iter()
+        .filter(|f| f.straight_path_length > 0.0)
+        .map(|f| f.diego_path_length / f.straight_path_length)
+        .sum::<f64>() / features.len() as f64;
+    
+    // Calculate the enhancement factor
+    // Higher ratios indicate more complex leaves and get more enhancement
+    let enhancement = (avg_ratio - 1.0).max(0.0) * 5.0 + 1.0;
+    
+    // Generate thornfiddle path values
+    let thornfiddle_values: Vec<f64> = features.iter()
+        .map(|f| calculate_thornfiddle_path(f))
+        .collect();
+    
+    // Find average thornfiddle path
+    let avg_thornfiddle = thornfiddle_values.iter().sum::<f64>() / thornfiddle_values.len() as f64;
+    
+    // Normalize thornfiddle values
+    let normalized_thornfiddle: Vec<f64> = thornfiddle_values.iter()
+        .map(|&v| v / avg_thornfiddle)
+        .collect();
+    
+    // Enhance the distance signature with the thornfiddle information
+    let mut enhanced_signature = Vec::with_capacity(distances.len());
+    
+    for (i, &d) in distances.iter().enumerate() {
+        // Map contour index to feature index (using modulo if sizes differ)
+        let feature_idx = (i * features.len()) / distances.len();
+        
+        // Get corresponding normalized thornfiddle value
+        let thornfiddle_factor = normalized_thornfiddle[feature_idx % normalized_thornfiddle.len()];
+        
+        // Enhance the distance with the thornfiddle factor and general enhancement
+        let enhanced_value = d * (1.0 + (thornfiddle_factor - 1.0) * enhancement);
+        
+        enhanced_signature.push(enhanced_value);
+    }
+    
+    enhanced_signature
+}
 
-    // 3. Pad series to a power of 2 for FFT efficiency
-    let mut padded_series = processed_series;
+/// Calculate power spectrum from signature
+fn calculate_power_spectrum(signature: &[f64]) -> Vec<f64> {
+    if signature.len() < 8 {
+        return Vec::new();
+    }
+    
+    // 1. Normalize signature to zero mean
+    let mean = signature.iter().sum::<f64>() / signature.len() as f64;
+    let mut normalized = signature.iter().map(|&x| x - mean).collect::<Vec<f64>>();
+    
+    // 2. Apply a Hann window to reduce spectral leakage
+    for i in 0..normalized.len() {
+        let window_factor = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / 
+                                         (normalized.len() - 1) as f64).cos());
+        normalized[i] *= window_factor;
+    }
+    
+    // 3. Pad to power of 2 for FFT efficiency
     let mut fft_size = 1;
-    while fft_size < original_len {
+    while fft_size < normalized.len() {
         fft_size *= 2;
     }
-    if fft_size < 4 {
-        fft_size = 4;
-    }
-
-    // Pad with zeros
-    padded_series.resize(fft_size, 0.0);
-
-    // 4. Convert to complex numbers for FFT
-    let mut complex_input: Vec<Complex<f64>> = padded_series
+    
+    let mut padded = normalized;
+    padded.resize(fft_size, 0.0);
+    
+    // 4. Perform FFT
+    let mut complex_input: Vec<Complex<f64>> = padded
         .iter()
         .map(|&x| Complex::new(x, 0.0))
         .collect();
-
-    // 5. Create FFT planner and forward FFT
+    
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(fft_size);
-
-    // Perform FFT
     fft.process(&mut complex_input);
+    
+    // 5. Calculate power spectrum (excluding DC component)
+    let mut powers = Vec::with_capacity(fft_size / 2);
+    
+    // Skip DC component (index 0)
+    for i in 1..fft_size / 2 {
+        powers.push(complex_input[i].norm_sqr());
+    }
+    
+    // 6. Normalize powers to sum to 1
+    let total_power: f64 = powers.iter().sum();
+    if total_power > 0.0 {
+        for p in &mut powers {
+            *p /= total_power;
+        }
+    }
+    
+    powers
+}
 
-    // 6. Calculate power spectrum (only use first half due to symmetry, excluding DC)
-    if fft_size < 4 {
+/// Calculate Shannon entropy from power spectrum
+fn calculate_spectral_entropy(powers: &[f64], circularity: f64) -> f64 {
+    if powers.is_empty() {
         return 0.0;
     }
     
-    let power_spectrum: Vec<f64> = complex_input[1..fft_size / 2]
-        .iter()
-        .map(|c| c.norm_sqr())
-        .collect();
-
-    if power_spectrum.is_empty() {
-        return 0.0;
-    }
-
-    // 7. Normalize to create probability distribution
-    let total_power: f64 = power_spectrum.iter().sum();
-    if total_power <= 1e-10 {
-        return 0.0;
-    }
-
-    let probabilities: Vec<f64> = power_spectrum
-        .iter()
-        .map(|&p| p / total_power)
-        .collect();
-
-    // 8. Calculate Shannon entropy
-    let entropy: f64 = -probabilities
-        .iter()
+    // 1. Calculate basic Shannon entropy
+    let entropy = -powers.iter()
         .filter(|&&p| p > 1e-10)
         .map(|&p| p * p.log2())
         .sum::<f64>();
-
-    // 9. Normalize by maximum possible entropy
-    let num_bins = probabilities.len() as f64;
-    if num_bins <= 1.0 {
-        return 0.0;
-    }
-
-    let max_entropy = num_bins.log2();
-    if max_entropy <= 1e-10 {
-        entropy
+    
+    // 2. Normalize by maximum possible entropy
+    let max_entropy = (powers.len() as f64).log2();
+    let normalized_entropy = if max_entropy > 1e-10 {
+        entropy / max_entropy
     } else {
-        // For circle-like shapes, apply additional scaling to reduce entropy
-        let final_entropy = entropy / max_entropy;
-        
-        if circularity > 0.85 {
-            // Apply exponential reduction based on circularity
-            // This ensures circles have very low entropy
-            let reduction_factor = ((circularity - 0.85) / 0.15).min(1.0);
-            final_entropy * (1.0 - reduction_factor * 0.9)
-        } else {
-            final_entropy
-        }
-    }
+        0.0
+    };
+    
+    // 3. Adjust based on circularity - circles should have low entropy regardless
+    let circularity_factor = if circularity > 0.95 {
+        0.001  // Perfect circles
+    } else if circularity > 0.8 {
+        0.2    // Near circles
+    } else if circularity > 0.6 {
+        0.5    // Somewhat circular
+    } else if circularity > 0.4 {
+        0.8    // Moderately complex
+    } else {
+        1.0    // Highly complex
+    };
+    
+    // 4. Apply circularity adjustment
+    let adjusted_entropy = normalized_entropy * circularity_factor;
+    
+    // 5. Apply non-linear scaling to enhance separation
+    adjusted_entropy.powf(0.7)
 }
 
-/// Create Thornfiddle summary CSV with spectral entropy, circularity, and area
+/// Calculate DiegoPath-enhanced spectral entropy
+fn calculate_diegopath_spectral_entropy(
+    contour: &[(u32, u32)],
+    features: &[MarginalPointFeatures],
+    circularity: f64,
+    interpolation_points: usize
+) -> f64 {
+    if contour.len() < 8 || features.is_empty() {
+        return 0.0;
+    }
+    
+    // Force very circular shapes to have minimal entropy
+    if circularity > 0.95 {
+        return 0.001;
+    }
+    
+    // 1. Extract DiegoPath-weighted signature
+    let signature = extract_diegopath_weighted_signature(
+        contour,
+        features,
+        interpolation_points
+    );
+    
+    // 2. Calculate power spectrum
+    let powers = calculate_power_spectrum(&signature);
+    
+    // 3. Calculate spectral entropy
+    let entropy = calculate_spectral_entropy(&powers, circularity);
+    
+    // 4. Scale based on average Diego/Straight ratio to add extra separation
+    let avg_ratio = features.iter()
+        .filter(|f| f.straight_path_length > 0.0)
+        .map(|f| f.diego_path_length / f.straight_path_length)
+        .sum::<f64>() / features.len() as f64;
+    
+    // Higher ratios imply more complex shapes and should have higher entropy
+    let diego_boost = if avg_ratio > 1.5 {
+        // Significant deviation - strong boost
+        1.5
+    } else if avg_ratio > 1.2 {
+        // Moderate deviation - medium boost
+        1.3
+    } else if avg_ratio > 1.1 {
+        // Slight deviation - small boost
+        1.1
+    } else {
+        // Minimal deviation - no boost
+        1.0
+    };
+    
+    // Apply the boost and ensure result is in [0,1]
+    (entropy * diego_boost).min(1.0)
+}
+
+/// Calculate spectral entropy using DiegoPath information
+pub fn calculate_contour_spectral_entropy(
+    contour: &[(u32, u32)], 
+    features: &[MarginalPointFeatures],
+    circularity: f64,
+    interpolation_points: usize
+) -> f64 {
+    calculate_diegopath_spectral_entropy(
+        contour,
+        features,
+        circularity,
+        interpolation_points
+    )
+}
+
+/// API-compatible function that gets DiegoPath info from MarginalPointFeatures
+pub fn calculate_features_spectral_entropy(
+    features: &[MarginalPointFeatures],
+    _smoothing_strength: f64,
+    circularity: f64,
+    _area: u32,
+    interpolation_points: usize
+) -> f64 {
+    // Create a dummy contour from feature indices
+    // In real pipeline usage, the actual contour will be passed separately
+    let dummy_contour: Vec<(u32, u32)> = features.iter()
+        .map(|f| (f.point_index as u32, f.straight_path_length as u32))
+        .collect();
+    
+    // Calculate spectral entropy
+    calculate_contour_spectral_entropy(
+        &dummy_contour,
+        features,
+        circularity,
+        interpolation_points
+    )
+}
+
+/// Create Thornfiddle summary CSV with spectral entropy and circularity
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
@@ -277,75 +371,123 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     Ok(())
 }
 
-pub fn calculate_features_spectral_entropy(
+/// Detailed DiegoPath signature analysis
+pub fn debug_diegopath_analysis<P: AsRef<Path>>(
+    contour: &[(u32, u32)],
     features: &[MarginalPointFeatures],
-    smoothing_strength: f64,
-    circularity: f64
-) -> f64 {
-    // Extract Thornfiddle path values
-    let mut thornfiddle_paths: Vec<f64> = features
-        .iter()
-        .map(|feature| calculate_thornfiddle_path(feature))
-        .collect();
+    filename: &str,
+    output_dir: P,
+    circularity: f64,
+    interpolation_points: usize
+) -> Result<()> {
+    let debug_dir = output_dir.as_ref().join("debug");
+    fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
     
-    // Apply smoothing if enabled
-    if smoothing_strength > 0.0 && thornfiddle_paths.len() > 1 {
-        // Convert smoothing strength to window size and sigma
-        // Window size should be odd
-        let window_size = (smoothing_strength * 2.0 + 1.0).round() as usize;
-        // Window size must be at least 3 for meaningful smoothing
-        let window_size = window_size.max(3);
-        let sigma = smoothing_strength * 0.5;
-        
-        thornfiddle_paths = apply_gaussian_smoothing(
-            &thornfiddle_paths, 
-            window_size, 
-            sigma
-        );
-    }
+    let debug_file = debug_dir.join(format!("{}_diegopath_analysis.csv", filename));
+    let mut writer = Writer::from_path(debug_file)
+        .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Calculate spectral entropy with shape awareness
-    calculate_spectral_entropy(&thornfiddle_paths, circularity)
+    // Extract signature data
+    let signature = extract_diegopath_weighted_signature(contour, features, interpolation_points);
+    let powers = calculate_power_spectrum(&signature);
+    let entropy = calculate_spectral_entropy(&powers, circularity);
+    
+    // Calculate average Diego/Straight ratio
+    let avg_ratio = features.iter()
+        .filter(|f| f.straight_path_length > 0.0)
+        .map(|f| f.diego_path_length / f.straight_path_length)
+        .sum::<f64>() / features.len() as f64;
+    
+    // Calculate average thornfiddle multiplier
+    let avg_multiplier = features.iter()
+        .map(|f| calculate_thornfiddle_multiplier(f))
+        .sum::<f64>() / features.len() as f64;
+    
+    // Write header
+    writer.write_record(&[
+        "Filename",
+        "Circularity",
+        "Avg_DiegoRatio",
+        "Avg_Multiplier",
+        "Raw_Entropy",
+        "Final_Entropy",
+        "Num_Features",
+        "Num_Contour_Points",
+    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+    
+    // Calculate final entropy
+    let final_entropy = calculate_diegopath_spectral_entropy(
+        contour,
+        features,
+        circularity,
+        interpolation_points
+    );
+    
+    // Write data
+    writer.write_record(&[
+        filename,
+        &format!("{:.6}", circularity),
+        &format!("{:.6}", avg_ratio),
+        &format!("{:.6}", avg_multiplier),
+        &format!("{:.6}", entropy),
+        &format!("{:.6}", final_entropy),
+        &features.len().to_string(),
+        &contour.len().to_string(),
+    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+    
+    writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
+    Ok(())
 }
 
-fn apply_gaussian_smoothing(signal: &[f64], window_size: usize, sigma: f64) -> Vec<f64> {
-    if window_size <= 1 || signal.len() <= 1 || sigma <= 0.0 {
-        return signal.to_vec();
-    }
+/// Basic debug function
+pub fn debug_thornfiddle_values(
+    features: &[MarginalPointFeatures],
+    filename: &str,
+    output_dir: &Path,
+    circularity: f64,
+    area: u32,
+    interpolation_points: usize
+) -> Result<()> {
+    let debug_dir = output_dir.join("debug");
+    fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
     
-    let half_window = window_size / 2;
-    let mut smoothed = Vec::with_capacity(signal.len());
+    let debug_file = debug_dir.join(format!("{}_thornfiddle_debug.csv", filename));
+    let mut writer = Writer::from_path(debug_file)
+        .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Create Gaussian kernel
-    let mut kernel = Vec::with_capacity(window_size);
-    let mut kernel_sum = 0.0;
+    // Write header
+    writer.write_record(&[
+        "Point_Index",
+        "StraightPath",
+        "DiegoPath",
+        "DiegoPath_Ratio",
+        "Thornfiddle_Multiplier",
+        "Thornfiddle_Path",
+        "Circularity",
+    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    for i in 0..window_size {
-        let x = i as f64 - half_window as f64;
-        let weight = (-0.5 * (x / sigma).powi(2)).exp();
-        kernel.push(weight);
-        kernel_sum += weight;
-    }
-    
-    // Normalize kernel
-    for weight in &mut kernel {
-        *weight /= kernel_sum;
-    }
-    
-    // Apply convolution
-    for i in 0..signal.len() {
-        let mut value = 0.0;
+    // Write data for each point
+    for feature in features {
+        let path_ratio = if feature.straight_path_length > 0.0 {
+            feature.diego_path_length / feature.straight_path_length
+        } else {
+            1.0
+        };
         
-        for j in 0..window_size {
-            let signal_idx = i as isize + j as isize - half_window as isize;
-            
-            if signal_idx >= 0 && signal_idx < signal.len() as isize {
-                value += signal[signal_idx as usize] * kernel[j];
-            }
-        }
+        let multiplier = calculate_thornfiddle_multiplier(feature);
+        let thornfiddle_path = feature.diego_path_length * multiplier;
         
-        smoothed.push(value);
+        writer.write_record(&[
+            &feature.point_index.to_string(),
+            &format!("{:.6}", feature.straight_path_length),
+            &format!("{:.6}", feature.diego_path_length),
+            &format!("{:.6}", path_ratio),
+            &format!("{:.6}", multiplier),
+            &format!("{:.6}", thornfiddle_path),
+            &format!("{:.6}", circularity),
+        ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
-    smoothed
+    writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
+    Ok(())
 }
