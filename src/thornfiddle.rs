@@ -20,25 +20,27 @@ pub fn calculate_thornfiddle_multiplier(feature: &MarginalPointFeatures) -> f64 
     let path_ratio = feature.diego_path_length / feature.straight_path_length;
     
     // Use exponential scaling to amplify differences
-    // This will create much stronger separation between simple and complex leaves
-    let path_complexity = ((path_ratio - 1.0) * 4.0).exp() - 1.0;
+    // MODIFIED: Reduced exponential factor from 4.0 to 2.0 for less aggressive scaling
+    let path_complexity = ((path_ratio - 1.0) * 2.0).exp() - 1.0; 
     
     // Apply upper limit to avoid extreme values
-    let path_complexity = path_complexity.min(15.0);
+    // MODIFIED: Reduced cap slightly as the growth is slower. Could be tuned.
+    let path_complexity = path_complexity.min(10.0); // Was 15.0
     
     // Calculate Region_Factor based on transparent vs non-transparent regions
     // This captures how much the path has to navigate around transparent areas
     let clr_sum = (feature.clr_alpha + feature.clr_gamma) as f64;
     let denominator = feature.straight_path_length + 1.0;
-    let region_factor = (clr_sum / denominator).sqrt() * 2.0; // Amplify region factor
+    // MODIFIED: Reduced amplification of region_factor from * 2.0 to * 1.5
+    let region_factor = (clr_sum / denominator).sqrt() * 1.5; 
     
     // Calculate final multiplier with increased sensitivity
     let multiplier = 1.0 + path_complexity * (1.0 + region_factor);
     
     // Apply non-linear scaling to further separate simple from complex
-    multiplier.powf(1.2)
+    // MODIFIED: Reduced powf from 1.2 to 1.1
+    multiplier.powf(1.1) 
 }
-
 /// Calculate enhanced Thornfiddle Path
 pub fn calculate_thornfiddle_path(feature: &MarginalPointFeatures) -> f64 {
     let multiplier = calculate_thornfiddle_multiplier(feature);
@@ -51,23 +53,22 @@ fn extract_diegopath_weighted_signature(
     features: &[MarginalPointFeatures],
     interpolation_points: usize
 ) -> Vec<f64> {
-    // First, check if we have enough contour points and features
-    if contour.len() < 8 || features.is_empty() {
+    // ... (existing code for resampling, centroid, basic distances) ...
+    if contour.len() < 8 || features.is_empty() { // Added check from original for safety
         return Vec::new();
     }
     
-    // Resample contour to fixed number of points
     let resampled = resample_contour(contour, interpolation_points);
     
-    // Calculate centroid (for reference)
     let n = resampled.len() as f64;
+    if n == 0.0 { return Vec::new(); } // Avoid division by zero
+
     let sum_x: f64 = resampled.iter().map(|&(x, _)| x as f64).sum();
     let sum_y: f64 = resampled.iter().map(|&(_, y)| y as f64).sum();
     
     let centroid_x = sum_x / n;
     let centroid_y = sum_y / n;
     
-    // Calculate basic distance signature
     let mut distances: Vec<f64> = resampled.iter()
         .map(|&(x, y)| {
             let dx = x as f64 - centroid_x;
@@ -76,24 +77,30 @@ fn extract_diegopath_weighted_signature(
         })
         .collect();
     
-    // Normalize by average radius
     let avg_radius = distances.iter().sum::<f64>() / n;
-    if avg_radius > 0.0 {
+    if avg_radius > 1e-6 { // Use a small epsilon for floating point comparison
         for d in &mut distances {
             *d /= avg_radius;
         }
     }
-    
+    // End of existing code snippet
+
     // Now enhance the signature using DiegoPath information
     // Calculate the average DiegoPath/StraightPath ratio
-    let avg_ratio = features.iter()
-        .filter(|f| f.straight_path_length > 0.0)
-        .map(|f| f.diego_path_length / f.straight_path_length)
-        .sum::<f64>() / features.len() as f64;
+    let valid_features_count = features.iter().filter(|f| f.straight_path_length > 0.0).count() as f64;
+    let avg_ratio = if valid_features_count > 0.0 {
+        features.iter()
+            .filter(|f| f.straight_path_length > 0.0)
+            .map(|f| f.diego_path_length / f.straight_path_length)
+            .sum::<f64>() / valid_features_count
+    } else {
+        1.0 // Default to 1.0 if no valid features to avoid division by zero
+    };
     
     // Calculate the enhancement factor
     // Higher ratios indicate more complex leaves and get more enhancement
-    let enhancement = (avg_ratio - 1.0).max(0.0) * 5.0 + 1.0;
+    // MODIFIED: Reduced enhancement multiplier from 5.0 to 2.5
+    let enhancement = (avg_ratio - 1.0).max(0.0) * 2.5 + 1.0; 
     
     // Generate thornfiddle path values
     let thornfiddle_values: Vec<f64> = features.iter()
@@ -101,19 +108,31 @@ fn extract_diegopath_weighted_signature(
         .collect();
     
     // Find average thornfiddle path
-    let avg_thornfiddle = thornfiddle_values.iter().sum::<f64>() / thornfiddle_values.len() as f64;
+    let avg_thornfiddle = if !thornfiddle_values.is_empty() {
+        thornfiddle_values.iter().sum::<f64>() / thornfiddle_values.len() as f64
+    } else {
+        1.0 // Default to 1.0 if empty to avoid division by zero
+    };
     
     // Normalize thornfiddle values
     let normalized_thornfiddle: Vec<f64> = thornfiddle_values.iter()
-        .map(|&v| v / avg_thornfiddle)
+        .map(|&v| if avg_thornfiddle > 1e-6 { v / avg_thornfiddle } else { 1.0 })
         .collect();
     
     // Enhance the distance signature with the thornfiddle information
     let mut enhanced_signature = Vec::with_capacity(distances.len());
     
+    if normalized_thornfiddle.is_empty() { // Handle empty normalized_thornfiddle
+        return distances; // Or return an empty vec, or handle as error
+    }
+
     for (i, &d) in distances.iter().enumerate() {
         // Map contour index to feature index (using modulo if sizes differ)
-        let feature_idx = (i * features.len()) / distances.len();
+        let feature_idx = if !features.is_empty() { // Ensure features is not empty
+                           (i * features.len()) / distances.len()
+                        } else {
+                           0 // Default index if features is empty, though this case should ideally be handled earlier
+                        };
         
         // Get corresponding normalized thornfiddle value
         let thornfiddle_factor = normalized_thornfiddle[feature_idx % normalized_thornfiddle.len()];
@@ -244,38 +263,40 @@ fn calculate_diegopath_spectral_entropy(
         features,
         interpolation_points
     );
+    if signature.is_empty() { return 0.0; } // Handle empty signature
     
     // 2. Calculate power spectrum
     let powers = calculate_power_spectrum(&signature);
+    if powers.is_empty() { return 0.0; } // Handle empty powers
     
     // 3. Calculate spectral entropy
     let entropy = calculate_spectral_entropy(&powers, circularity);
     
     // 4. Scale based on average Diego/Straight ratio to add extra separation
-    let avg_ratio = features.iter()
-        .filter(|f| f.straight_path_length > 0.0)
-        .map(|f| f.diego_path_length / f.straight_path_length)
-        .sum::<f64>() / features.len() as f64;
-    
-    // Higher ratios imply more complex shapes and should have higher entropy
-    let diego_boost = if avg_ratio > 1.5 {
-        // Significant deviation - strong boost
-        1.5
-    } else if avg_ratio > 1.2 {
-        // Moderate deviation - medium boost
-        1.3
-    } else if avg_ratio > 1.1 {
-        // Slight deviation - small boost
-        1.1
+    let valid_features_count = features.iter().filter(|f| f.straight_path_length > 0.0).count() as f64;
+    let avg_ratio = if valid_features_count > 0.0 {
+        features.iter()
+            .filter(|f| f.straight_path_length > 0.0)
+            .map(|f| f.diego_path_length / f.straight_path_length)
+            .sum::<f64>() / valid_features_count
     } else {
-        // Minimal deviation - no boost
+        1.0 // Default if no valid features
+    };
+
+    // MODIFIED: Adjusted thresholds and boost factors for less aggressive boosting
+    let diego_boost = if avg_ratio > 1.4 { // Was 1.5
+        1.25 // Was 1.5
+    } else if avg_ratio > 1.2 { // Unchanged threshold
+        1.15 // Was 1.3
+    } else if avg_ratio > 1.05 { // Was 1.1, made more sensitive to smaller deviations
+        1.05 // Was 1.1
+    } else {
         1.0
     };
     
     // Apply the boost and ensure result is in [0,1]
-    (entropy * diego_boost).min(1.0)
+    (entropy * diego_boost).min(1.0).max(0.0) // Ensure it's also not negative, though entropy shouldn't be.
 }
-
 /// Calculate spectral entropy using DiegoPath information
 pub fn calculate_contour_spectral_entropy(
     contour: &[(u32, u32)], 
