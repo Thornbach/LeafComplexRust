@@ -1,3 +1,5 @@
+// src/pipeline.rs - Updated to use simplified spectral entropy
+
 use std::path::PathBuf;
 
 use crate::config::Config;
@@ -5,14 +7,11 @@ use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::generate_features;
 use crate::image_io::{InputImage, save_image};
 use crate::image_utils::resize_image;
-use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, resample_contour, smooth_contour, create_lmc_with_com_component};
+use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::get_reference_point;
-use crate::path_algorithms::calculate_clr_regions;
-use crate::image_utils::has_rgb_color;
 use crate::shape_analysis::analyze_shape;
 use crate::thornfiddle;
-
 
 /// Process a single image
 pub fn process_image(
@@ -23,9 +22,9 @@ pub fn process_image(
     let InputImage { image, path, filename } = input_image;
 
     let subfolder = path.parent()
-    .and_then(|p| p.file_name())
-    .and_then(|s| s.to_str())
-    .unwrap_or("root");
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("root");
     
     // Step 1: Resize if configured
     let processed_image = if let Some(dimensions) = config.resize_dimensions {
@@ -50,7 +49,7 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
-    // Get shape metrics early so we can use circularity for spectral entropy calculation
+    // Get shape metrics
     let (area, circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
     
     // Save debug images if requested
@@ -58,7 +57,6 @@ pub fn process_image(
         let debug_dir = PathBuf::from(&config.output_base_dir).join("debug");
         std::fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
         
-        // Save original, opened and marked images
         save_image(&processed_image, debug_dir.join(format!("{}_original.png", filename)))?;
         save_image(&opened_image, debug_dir.join(format!("{}_opened.png", filename)))?;
         save_image(&marked_image, debug_dir.join(format!("{}_marked.png", filename)))?;
@@ -73,20 +71,17 @@ pub fn process_image(
         config.marked_region_color_rgb,
     )?;
     
-    // Debug output for reference point
     if debug {
         println!("Reference point for {}: {:?}", filename, reference_point);
     }
     
-    // Step 4: Per-Marginal Point Analysis (Iteration 1: Pink Regions are OPAQUE)
-    // Identify marginal points
+    // Step 4: LEC Analysis (Pink regions are OPAQUE)
     let lec_contour = trace_contour(
         &marked_image,
         true, // is_pink_opaque = true for LEC
         config.marked_region_color_rgb,
     );
     
-    // Generate features for each marginal point
     let lec_features = generate_features(
         reference_point,
         &lec_contour,
@@ -98,20 +93,17 @@ pub fn process_image(
         true, // is_lec = true
     )?;
     
-    // Debug output
     if debug {
         println!("LEC contour points: {}", lec_contour.len());
     }
     
-    // Step 5: Per-Marginal Point Analysis (Iteration 2: Pink Regions are TRANSPARENT)
-    // Identify marginal points for LMC
+    // Step 5: LMC Analysis (Pink regions are TRANSPARENT)
     let lmc_contour = trace_contour(
         &lmc_image,
         false, // is_pink_opaque = false for LMC
         config.marked_region_color_rgb,
     );
     
-    // Generate features for each marginal point
     let lmc_features = generate_features(
         reference_point,
         &lmc_contour,
@@ -123,103 +115,46 @@ pub fn process_image(
         false, // is_lec = false
     )?;
     
-    // Debug output
     if debug {
         println!("LMC contour points: {}", lmc_contour.len());
-        
-        // Calculate and display CLR regions for debugging
-        // Select a sample point (first point in contour) for demonstration
-        if !lec_contour.is_empty() {
-            let sample_point = lec_contour[0];
-            
-            // Calculate spiral paths and CLR regions
-            let features = &lec_features[0];
-            if features.gyro_path_length > 0.0 {
-                // Assuming left spiral path would need to be recalculated here...
-                // This is simplified for debugging only
-                println!("Sample point CLR regions:");
-                println!("Left CLR Alpha: {}, Gamma: {}", features.left_clr_alpha, features.left_clr_gamma);
-                println!("Right CLR Alpha: {}, Gamma: {}", features.right_clr_alpha, features.right_clr_gamma);
-                println!("Avg CLR Alpha: {}, Gamma: {}", features.clr_alpha, features.clr_gamma);
-            }
-        }
     }
     
-    // Step 6: Write output CSVs
+    // Step 6: Write feature CSVs
     write_lec_csv(&lec_features, &config.output_base_dir, &filename)?;
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename)?;
 
-    // Use the shape-aware spectral entropy calculation with circularity
-    let raw_contour = trace_contour(
-        &marked_image,
-        false, // Use non-pink regions
-        config.marked_region_color_rgb
-    );
-    
-    // Calculate all three types of spectral entropy
-    let spectral_entropy = thornfiddle::calculate_contour_spectral_entropy(
-        &raw_contour,
-        &lmc_features, // Pass the actual features with DiegoPath information
-        circularity,
+    // Step 7: Calculate spectral entropy (simplified)
+    let spectral_entropy = thornfiddle::calculate_spectral_entropy(
+        &lmc_contour,
         config.thornfiddle_interpolation_points
     );
     
-    let sp_entropy = thornfiddle::calculate_straightpath_entropy(
-        &raw_contour,
-        &lmc_features,
-        circularity,
-        config.thornfiddle_interpolation_points
-    );
-    
-    let dp_entropy = thornfiddle::calculate_diegopath_entropy(
-        &raw_contour,
-        &lmc_features,
-        circularity,
-        config.thornfiddle_interpolation_points
-    );
-    
-    // Create basic summary with all three entropy values
+    // Step 8: Create Thornfiddle summary
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
         subfolder,
         spectral_entropy,
-        sp_entropy,
-        dp_entropy,
         circularity,
         area
     )?;
     
-    // Add detailed debug output if debug mode is enabled
+    // Debug output if requested
     if debug {
-        // Generate detailed DiegoPath analysis
-        thornfiddle::debug_diegopath_analysis(
-            &raw_contour,
-            &lmc_features,
-            &filename,
-            &PathBuf::from(&config.output_base_dir),
-            circularity,
-            config.thornfiddle_interpolation_points
-        )?;
-        
-        // Basic debug for features
         thornfiddle::debug_thornfiddle_values(
             &lmc_features,
             &filename,
             &PathBuf::from(&config.output_base_dir),
-            circularity,
-            area,
-            config.thornfiddle_interpolation_points
+            spectral_entropy
         )?;
         
-        println!("DiegoPath-Enhanced Spectral Analysis completed:");
-        println!("  Thornfiddle Spectral Entropy: {:.6}", spectral_entropy);
-        println!("  StraightPath Entropy: {:.6}", sp_entropy);
-        println!("  DiegoPath Entropy: {:.6}", dp_entropy);
+        println!("Analysis completed for {}:", filename);
+        println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Circularity: {:.6}", circularity);
         println!("  Area: {} pixels", area);
-        println!("  Contour Points: {}", raw_contour.len());
-        println!("  Feature Points: {}", lmc_features.len());
+        println!("  LEC features: {}", lec_features.len());
+        println!("  LMC features: {}", lmc_features.len());
     }
+    
     Ok(())
 }
