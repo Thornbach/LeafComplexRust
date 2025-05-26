@@ -74,7 +74,7 @@ pub fn calculate_emerge_point(
     }
 }
 
-/// Calculate the Center of Mass (COM)
+/// Calculate the Center of Mass (COM) for any image
 pub fn calculate_center_of_mass(image: &RgbaImage) -> Result<(u32, u32)> {
     let (width, height) = image.dimensions();
     let mut sum_x = 0.0;
@@ -106,7 +106,7 @@ pub fn calculate_center_of_mass(image: &RgbaImage) -> Result<(u32, u32)> {
     Ok((com_x.round() as u32, com_y.round() as u32))
 }
 
-/// Get the reference point based on the configuration choice
+/// Get the reference point based on the configuration choice for any image
 pub fn get_reference_point(
     image: &RgbaImage,
     marked_image: &RgbaImage,
@@ -116,5 +116,19 @@ pub fn get_reference_point(
     match reference_point_choice {
         ReferencePointChoice::Ep => calculate_emerge_point(marked_image, marked_color),
         ReferencePointChoice::Com => calculate_center_of_mass(image),
+    }
+}
+
+/// Get the reference point specifically for LMC analysis
+/// This uses the LMC image for COM calculation if needed
+pub fn get_lmc_reference_point(
+    lmc_image: &RgbaImage,
+    marked_image: &RgbaImage,
+    reference_point_choice: &ReferencePointChoice,
+    marked_color: [u8; 3],
+) -> Result<(u32, u32)> {
+    match reference_point_choice {
+        ReferencePointChoice::Ep => calculate_emerge_point(marked_image, marked_color),
+        ReferencePointChoice::Com => calculate_center_of_mass(lmc_image), // Use LMC image for COM
     }
 }

@@ -69,6 +69,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     features: &[MarginalPointFeatures],
     output_dir: P,
     filename: &str,
+    smoothed_thornfiddle_path: Option<&[f64]>,
 ) -> Result<()> {
     let output_path = output_dir.as_ref().join("LMC").join(format!("{}.csv", filename));
     
@@ -81,7 +82,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - include DiegoPath and Thornfiddle fields
+    // Write header - include DiegoPath, Thornfiddle, and Thornfiddle_Path_Smoothed fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -97,13 +98,21 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
         "DiegoPath_Perc",
         "Thornfiddle_Multiplier",
         "Thornfiddle_Path",
+        "Thornfiddle_Path_Smoothed",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
-    for feature in features {
+    for (i, feature) in features.iter().enumerate() {
         // Calculate Thornfiddle values for this feature
         let thornfiddle_multiplier = calculate_thornfiddle_multiplier(feature);
         let thornfiddle_path = calculate_thornfiddle_path(feature);
+        
+        // Get smoothed value if available
+        let thornfiddle_path_smoothed = if let Some(smoothed) = smoothed_thornfiddle_path {
+            smoothed.get(i).copied().unwrap_or(thornfiddle_path)
+        } else {
+            thornfiddle_path // Fallback to unsmoothed if no smoothed data
+        };
         
         writer.write_record(&[
             feature.point_index.to_string(),
@@ -120,6 +129,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.diego_path_perc),
             format!("{:.6}", thornfiddle_multiplier),
             format!("{:.6}", thornfiddle_path),
+            format!("{:.6}", thornfiddle_path_smoothed),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
