@@ -1,8 +1,8 @@
 [package]
 name = "leaf_complex_r"
-version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+version = "0.7.0"
+edition = "2025"
+authors = ["Tobias Müller <tobimu@proton.me"]
 description = "A tool for analyzing leaf morphology from PNG images"
 readme = "README.md"
 license = "MIT"
