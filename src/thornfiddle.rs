@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::fs;
+use std::collections::HashSet;
 use rustfft::{FftPlanner, num_complex::Complex};
 use csv::Writer;
 
@@ -99,17 +100,132 @@ pub fn calculate_spectral_entropy_from_pink_path(
     entropy * variation_factor
 }
 
-/// Calculate Edge Complexity using the provided algorithm
-pub fn calculate_edge_feature_density(colored_path_values: &[f64]) -> Result<f64> {
-    if colored_path_values.is_empty() {
-        return Err(LeafComplexError::Other("Empty colored path values for edge feature density calculation".to_string()));
+/// Extract contour signature using absolute distance deviations from mean radius
+fn extract_contour_signature(contour: &[(u32, u32)], interpolation_points: usize) -> Vec<f64> {
+    use crate::morphology::resample_contour;
+    
+    if contour.len() < 3 {
+        return Vec::new();
     }
     
-    // Threshold to consider a point as having an edge feature
-    let threshold = 1.0;
+    // Resample contour to fixed number of points
+    let resampled = resample_contour(contour, interpolation_points);
+    if resampled.is_empty() {
+        return Vec::new();
+    }
+    
+    // Calculate centroid
+    let n = resampled.len() as f64;
+    let sum_x: f64 = resampled.iter().map(|&(x, _)| x as f64).sum();
+    let sum_y: f64 = resampled.iter().map(|&(_, y)| y as f64).sum();
+    
+    let centroid_x = sum_x / n;
+    let centroid_y = sum_y / n;
+    
+    // Calculate distances from centroid
+    let distances: Vec<f64> = resampled.iter()
+        .map(|&(x, y)| {
+            let dx = x as f64 - centroid_x;
+            let dy = y as f64 - centroid_y;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .collect();
+    
+    // Apply light smoothing to reduce digitization noise
+    let smoothed_distances = smooth_signal(&distances, 2);
+    
+    // Calculate mean radius
+    let mean_radius = smoothed_distances.iter().sum::<f64>() / n;
+    
+    // Return ABSOLUTE deviations from mean radius
+    // This preserves the actual magnitude of shape complexity
+    let absolute_deviations: Vec<f64> = smoothed_distances.iter()
+        .map(|&d| (d - mean_radius).abs())
+        .collect();
+    
+    absolute_deviations
+}
+
+/// Simple smoothing filter to reduce noise
+fn smooth_signal(signal: &[f64], window_size: usize) -> Vec<f64> {
+    if signal.len() < 3 || window_size == 0 {
+        return signal.to_vec();
+    }
+    
+    let mut smoothed = Vec::with_capacity(signal.len());
+    let half_window = window_size / 2;
+    
+    for i in 0..signal.len() {
+        let mut sum = 0.0;
+        let mut count = 0;
+        
+        // Calculate window bounds
+        let start = if i >= half_window { i - half_window } else { 0 };
+        let end = std::cmp::min(i + half_window + 1, signal.len());
+        
+        // Average over window
+        for j in start..end {
+            sum += signal[j];
+            count += 1;
+        }
+        
+        smoothed.push(sum / count as f64);
+    }
+    
+    smoothed
+}
+
+/// Calculate spectral entropy from contour with magnitude-based thresholding
+pub fn calculate_spectral_entropy_from_contour(
+    contour: &[(u32, u32)], 
+    interpolation_points: usize
+) -> f64 {
+    // Extract contour signature
+    let signature = extract_contour_signature(contour, interpolation_points);
+    if signature.is_empty() {
+        return 0.0;
+    }
+    
+    // Calculate statistics of absolute deviations
+    let mean_deviation = signature.iter().sum::<f64>() / signature.len() as f64;
+    let max_deviation = signature.iter().fold(0.0f64, |a, &b| a.max(b));
+    
+    // Threshold for "simple" shapes based on absolute deviation magnitude
+    // If mean absolute deviation is very small, it's essentially a circle/simple shape
+    if mean_deviation < 5.0 {
+        // Very low variation = very low entropy
+        return 0.001 + mean_deviation * 0.0001; // Tiny entropy proportional to variation
+    }
+    
+    if max_deviation < 10.0 {
+        // Low variation = low entropy  
+        return 0.01 + mean_deviation * 0.001;
+    }
+    
+    // For shapes with significant variation, proceed with spectral analysis
+    let powers = calculate_power_spectrum_periodic(&signature);
+    if powers.is_empty() {
+        return 0.0;
+    }
+    
+    // Calculate Shannon entropy
+    let entropy = calculate_shannon_entropy(&powers);
+    
+    // Scale entropy based on the magnitude of deviations
+    // More absolute variation = higher potential entropy
+    let magnitude_factor = (mean_deviation / 20.0).min(1.0); // Cap at 1.0
+    
+    entropy * magnitude_factor
+}
+/// Detect petiole sequence in a signal using outlier analysis
+/// Returns the indices of the detected petiole sequence (longest sequence with extreme values)
+pub fn detect_petiole_sequence(signal: &[f64], threshold: f64) -> Option<Vec<usize>> {
+    if signal.is_empty() {
+        return None;
+    }
     
     // Sort values to identify outliers
-    let mut sorted_values = colored_path_values.to_vec();
+    let mut sorted_values = signal.to_vec();
     sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     
     // Determine outlier threshold (values above 95th percentile are potential outliers)
@@ -120,25 +236,25 @@ pub fn calculate_edge_feature_density(colored_path_values: &[f64]) -> Result<f64
         f64::MAX
     };
     
-    println!("Outlier threshold (95th percentile): {}", outlier_threshold);
+    println!("Petiole detection - Outlier threshold (95th percentile): {}", outlier_threshold);
     
-    // Step 1: Find all connected sequences of edge features
+    // Find all connected sequences of features above threshold
     let mut feature_sequences = Vec::new();
     let mut current_sequence = Vec::new();
     let mut has_extreme_value = false;
     
     // We'll wrap around the contour to handle sequences that cross the start/end boundary
-    let extended_values: Vec<f64> = colored_path_values.iter()
-        .chain(colored_path_values.iter())
+    let extended_signal: Vec<f64> = signal.iter()
+        .chain(signal.iter())
         .cloned()
         .collect();
     
-    for i in 0..colored_path_values.len() {
-        let value = extended_values[i];
+    for i in 0..signal.len() {
+        let value = extended_signal[i];
         
         if value > threshold {
             // Add point to current sequence
-            current_sequence.push((i, value));
+            current_sequence.push(i);
             
             // Check if this is an extreme value (in top 5%)
             if value >= outlier_threshold {
@@ -160,30 +276,169 @@ pub fn calculate_edge_feature_density(colored_path_values: &[f64]) -> Result<f64
         feature_sequences.push(current_sequence);
     }
     
-    // Step 2: Identify the longest sequence (likely the petiole)
-    let longest_sequence = feature_sequences.iter()
-        .max_by_key(|seq| seq.len())
-        .cloned();
-    
-    // Create a filtered copy of the values with the longest sequence set to zero
-    let mut filtered_values = colored_path_values.to_vec();
+    // Find the longest sequence (likely the petiole)
+    let longest_sequence = feature_sequences.into_iter()
+        .max_by_key(|seq| seq.len());
     
     if let Some(petiole_sequence) = longest_sequence {
-        println!("Identified potential petiole sequence with {} points", petiole_sequence.len());
-        
-        // Set all values in the longest sequence to 0
-        for (idx, _) in petiole_sequence {
-            // Make sure we handle wrapped indices correctly
-            let actual_idx = idx % colored_path_values.len();
-            filtered_values[actual_idx] = 0.0;
-        }
+        println!("Detected petiole sequence with {} points", petiole_sequence.len());
+        Some(petiole_sequence)
     } else {
-        println!("No significant petiole sequence identified");
+        println!("No significant petiole sequence detected");
+        None
+    }
+}
+
+/// Apply petiole filter to a signal
+/// Mode: true = set to zero, false = remove completely and merge ends
+pub fn apply_petiole_filter(signal: &[f64], petiole_indices: &[usize], remove_completely: bool) -> Vec<f64> {
+    if petiole_indices.is_empty() {
+        return signal.to_vec();
     }
     
-    // Step 3: Calculate complexity metrics on the filtered values
+    if remove_completely {
+        // Mode 2: Remove petiole completely and merge loose ends
+        let mut filtered_signal = Vec::new();
+        let petiole_set: std::collections::HashSet<usize> = petiole_indices.iter().cloned().collect();
+        
+        for (i, &value) in signal.iter().enumerate() {
+            if !petiole_set.contains(&i) {
+                filtered_signal.push(value);
+            }
+        }
+        
+        println!("Petiole removal: {} -> {} points", signal.len(), filtered_signal.len());
+        filtered_signal
+    } else {
+        // Mode 1: Set petiole values to zero (current behavior)
+        let mut filtered_signal = signal.to_vec();
+        for &idx in petiole_indices {
+            if idx < filtered_signal.len() {
+                filtered_signal[idx] = 0.0;
+            }
+        }
+        
+        println!("Petiole zeroing: {} points set to zero", petiole_indices.len());
+        filtered_signal
+    }
+}
+
+/// Apply threshold filter to pink path values
+/// Sets all values at or below the threshold to zero
+pub fn apply_pink_threshold_filter(
+    features: &mut [MarginalPointFeatures],
+    enable_threshold_filter: bool,
+    threshold: f64,
+) {
+    if !enable_threshold_filter {
+        return;
+    }
     
-    // Count points with significant edge features (after filtering)
+    let mut filtered_count = 0;
+    
+    for feature in features.iter_mut() {
+        if let Some(pink_value) = feature.diego_path_pink {
+            if (pink_value as f64) <= threshold {
+                feature.diego_path_pink = Some(0);
+                filtered_count += 1;
+            }
+        }
+    }
+    
+    if filtered_count > 0 {
+        println!("Pink threshold filter: {} values <= {:.1} set to zero", filtered_count, threshold);
+    }
+}
+
+/// Filter petiole from LEC features (Pink Path signal) with optional threshold filtering
+pub fn filter_petiole_from_lec_features(
+    features: &[MarginalPointFeatures],
+    enable_petiole_filter: bool,
+    remove_completely: bool,
+    threshold: f64,
+    enable_pink_threshold_filter: bool,
+    pink_threshold: f64,
+) -> (Vec<MarginalPointFeatures>, Option<Vec<usize>>) {
+    if !enable_petiole_filter && !enable_pink_threshold_filter {
+        return (features.to_vec(), None);
+    }
+    
+    let mut working_features = features.to_vec();
+    let mut petiole_indices = None;
+    
+    // Step 1: Apply petiole filtering if enabled
+    if enable_petiole_filter && !working_features.is_empty() {
+        // Extract pink path signal for petiole detection
+        let pink_signal = extract_pink_path_signal(&working_features);
+        
+        // Detect petiole sequence
+        petiole_indices = detect_petiole_sequence(&pink_signal, threshold);
+        
+        if let Some(ref indices) = petiole_indices {
+            if remove_completely {
+                // Remove features at petiole indices completely
+                let petiole_set: HashSet<usize> = indices.iter().cloned().collect();
+                let filtered_features: Vec<MarginalPointFeatures> = working_features.iter()
+                    .enumerate()
+                    .filter(|(i, _)| !petiole_set.contains(i))
+                    .map(|(_, feature)| feature.clone())
+                    .collect();
+                
+                // Update point indices to be sequential
+                working_features = filtered_features.into_iter()
+                    .enumerate()
+                    .map(|(new_idx, mut feature)| {
+                        feature.point_index = new_idx;
+                        feature
+                    })
+                    .collect();
+                
+                println!("LEC petiole removal: {} -> {} features", features.len(), working_features.len());
+            } else {
+                // Set petiole features' pink values to zero but keep all features
+                for &idx in indices {
+                    if idx < working_features.len() {
+                        working_features[idx].diego_path_pink = Some(0);
+                    }
+                }
+                
+                println!("LEC petiole zeroing: {} features modified", indices.len());
+            }
+        }
+    }
+    
+    // Step 2: Apply pink threshold filtering if enabled
+    apply_pink_threshold_filter(&mut working_features, enable_pink_threshold_filter, pink_threshold);
+    
+    (working_features, petiole_indices)
+}
+/// Calculate Edge Complexity using the provided algorithm with configurable petiole filtering
+pub fn calculate_edge_feature_density(
+    colored_path_values: &[f64],
+    enable_petiole_filter: bool,
+    petiole_remove_completely: bool,
+) -> Result<f64> {
+    if colored_path_values.is_empty() {
+        return Err(LeafComplexError::Other("Empty colored path values for edge feature density calculation".to_string()));
+    }
+    
+    // Threshold to consider a point as having an edge feature
+    let threshold = 1.0;
+    
+    // Apply petiole filtering if enabled
+    let filtered_values = if enable_petiole_filter {
+        if let Some(petiole_indices) = detect_petiole_sequence(colored_path_values, threshold) {
+            apply_petiole_filter(colored_path_values, &petiole_indices, petiole_remove_completely)
+        } else {
+            colored_path_values.to_vec()
+        }
+    } else {
+        colored_path_values.to_vec()
+    };
+    
+    // Calculate complexity metrics on the (potentially filtered) values
+    
+    // Count points with significant edge features
     let feature_points = filtered_values.iter()
         .filter(|&&v| v > threshold)
         .count();
@@ -191,7 +446,7 @@ pub fn calculate_edge_feature_density(colored_path_values: &[f64]) -> Result<f64
     // Total number of contour points
     let total_points = filtered_values.len();
     
-    // Sum the magnitudes of edge features (after filtering)
+    // Sum the magnitudes of edge features
     let sum_feature_magnitudes = filtered_values.iter()
         .filter(|&&v| v > threshold)
         .sum::<f64>();
@@ -398,13 +653,14 @@ pub fn calculate_spectral_entropy_from_thornfiddle_path(
     (entropy * variation_factor, smoothed_signal)
 }
 
-/// Create Thornfiddle summary CSV with both circularity scores and new metrics
+/// Create Thornfiddle summary CSV with both circularity scores and all metrics
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
     subfolder: &str,
     spectral_entropy: f64,
     spectral_entropy_pink: f64,
+    spectral_entropy_contour: f64,
     edge_complexity: f64,
     lec_circularity: f64,
     lmc_circularity: f64,
@@ -437,6 +693,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
             "Subfolder",
             "Spectral_Entropy",
             "Spectral_Entropy_Pink",
+            "Spectral_Entropy_Contour",
             "Edge_Complexity",
             "LEC_Circularity",
             "LMC_Circularity",
@@ -452,6 +709,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         subfolder,
         &format!("{:.6}", spectral_entropy),
         &format!("{:.6}", spectral_entropy_pink),
+        &format!("{:.6}", spectral_entropy_contour),
         &format!("{:.6}", edge_complexity),
         &format!("{:.6}", lec_circularity),
         &format!("{:.6}", lmc_circularity),

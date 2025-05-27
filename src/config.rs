@@ -28,6 +28,23 @@ pub struct Config {
     #[serde(default = "default_parallel")]
     pub use_parallel: bool,
     
+    // Petiole filtering parameters
+    #[serde(default = "default_enable_petiole_filter_lec")]
+    pub enable_petiole_filter_lec: bool,
+    
+    #[serde(default = "default_enable_petiole_filter_edge_complexity")]
+    pub enable_petiole_filter_edge_complexity: bool,
+    
+    #[serde(default = "default_petiole_remove_completely")]
+    pub petiole_remove_completely: bool,
+    
+    // Pink threshold filtering parameters
+    #[serde(default = "default_enable_pink_threshold_filter")]
+    pub enable_pink_threshold_filter: bool,
+    
+    #[serde(default = "default_pink_threshold_value")]
+    pub pink_threshold_value: f64,
+    
     #[serde(default = "default_thornfiddle_smoothing_strength")]
     pub thornfiddle_smoothing_strength: f64,
     
@@ -52,6 +69,26 @@ fn default_parallel() -> bool {
 
 fn default_gui_resize() -> Option<[u32; 2]> {
     Some([512, 512])
+}
+
+fn default_enable_petiole_filter_lec() -> bool {
+    true
+}
+
+fn default_enable_petiole_filter_edge_complexity() -> bool {
+    true
+}
+
+fn default_petiole_remove_completely() -> bool {
+    false // Default to zeroing mode
+}
+
+fn default_enable_pink_threshold_filter() -> bool {
+    true
+}
+
+fn default_pink_threshold_value() -> f64 {
+    3.0
 }
 
 fn default_thornfiddle_smoothing_strength() -> f64 {
@@ -93,6 +130,11 @@ impl Config {
             golden_spiral_rotation_steps: 36,
             golden_spiral_phi_exponent_factor,
             use_parallel: true,
+            enable_petiole_filter_lec: true,
+            enable_petiole_filter_edge_complexity: true,
+            petiole_remove_completely: false,
+            enable_pink_threshold_filter: true,
+            pink_threshold_value: 3.0,
             thornfiddle_smoothing_strength: 1.0,
             thornfiddle_interpolation_points: 1000,
         }

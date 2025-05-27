@@ -94,7 +94,8 @@ pub fn process_image(
         config.marked_region_color_rgb,
     );
     
-    let lec_features = generate_features(
+    // Generate initial LEC features
+    let initial_lec_features = generate_features(
         lec_reference_point,
         &lec_contour,
         &processed_image,
@@ -105,8 +106,32 @@ pub fn process_image(
         true, // is_lec = true
     )?;
     
+    // Apply petiole filtering to LEC features if enabled
+    let (lec_features, petiole_info) = thornfiddle::filter_petiole_from_lec_features(
+        &initial_lec_features,
+        config.enable_petiole_filter_lec,
+        config.petiole_remove_completely,
+        1.0, // threshold for petiole detection
+        config.enable_pink_threshold_filter,
+        config.pink_threshold_value,
+    );
+    
     if debug {
         println!("LEC contour points: {}", lec_contour.len());
+        if let Some(ref petiole_indices) = petiole_info {
+            println!("Petiole detected: {} points", petiole_indices.len());
+            if config.petiole_remove_completely {
+                println!("Petiole handling: Complete removal (merging ends)");
+            } else {
+                println!("Petiole handling: Set to zero");
+            }
+        } else {
+            println!("No petiole detected in LEC analysis");
+        }
+        
+        if config.enable_pink_threshold_filter {
+            println!("Pink threshold filter enabled: values <= {:.1} set to zero", config.pink_threshold_value);
+        }
     }
     
     // Step 5: LMC Analysis (Pink regions are TRANSPARENT) - Use LMC reference point
@@ -143,13 +168,22 @@ pub fn process_image(
     // Step 7b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
     let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features);
     
-    // Step 7c: Calculate Edge Complexity from Pink Path values
+    // Step 7c: Calculate spectral entropy from LEC contour shape
+    let spectral_entropy_contour = thornfiddle::calculate_spectral_entropy_from_contour(
+        &lec_contour,
+        config.thornfiddle_interpolation_points
+    );
+    
+    // Step 7d: Calculate Edge Complexity from Pink Path values
     let pink_path_signal = thornfiddle::extract_pink_path_signal(&lec_features);
-    let edge_complexity = thornfiddle::calculate_edge_feature_density(&pink_path_signal)
-        .unwrap_or_else(|e| {
-            eprintln!("Warning: Edge complexity calculation failed for {}: {}", filename, e);
-            0.0
-        });
+    let edge_complexity = thornfiddle::calculate_edge_feature_density(
+        &pink_path_signal,
+        config.enable_petiole_filter_edge_complexity,
+        config.petiole_remove_completely,
+    ).unwrap_or_else(|e| {
+        eprintln!("Warning: Edge complexity calculation failed for {}: {}", filename, e);
+        0.0
+    });
     
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
@@ -161,6 +195,7 @@ pub fn process_image(
         subfolder,
         spectral_entropy,
         spectral_entropy_pink,
+        spectral_entropy_contour,
         edge_complexity,
         lec_circularity,
         lmc_circularity,
@@ -181,6 +216,7 @@ pub fn process_image(
         println!("Analysis completed for {}:", filename);
         println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Spectral Entropy Pink: {:.6}", spectral_entropy_pink);
+        println!("  Spectral Entropy Contour: {:.6}", spectral_entropy_contour);
         println!("  Edge Complexity: {:.6}", edge_complexity);
         println!("  LEC Circularity: {:.6}", lec_circularity);
         println!("  LMC Circularity: {:.6}", lmc_circularity);
