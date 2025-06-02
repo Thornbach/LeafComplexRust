@@ -51,6 +51,10 @@ pub struct Config {
     // New parameter for spectral analysis
     #[serde(default = "default_thornfiddle_interpolation_points")]
     pub thornfiddle_interpolation_points: usize,
+
+    // LEC scaling factor for edge complexity calculation
+    #[serde(default = "default_lec_scaling_factor")]
+    pub lec_scaling_factor: f64,
 }
 
 /// Reference point choice enum
@@ -100,6 +104,10 @@ fn default_thornfiddle_interpolation_points() -> usize {
     1000 // Default to 1000 points for consistent analysis
 }
 
+fn default_lec_scaling_factor() -> f64 {
+    3.0 // Default scaling factor for edge complexity
+}
+
 impl Config {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -137,6 +145,7 @@ impl Config {
             pink_threshold_value: 3.0,
             thornfiddle_smoothing_strength: 1.0,
             thornfiddle_interpolation_points: 1000,
+            lec_scaling_factor: 3.0,
         }
     }
 

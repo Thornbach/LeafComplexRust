@@ -6,7 +6,7 @@ output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will
 resize_dimensions = [512, 512]  # Optional [width, height] for batch processing
 gui_resize_dimensions = [1024, 1024]  # Optional [width, height] for GUI mode - speeds up analysis
 
-opening_kernel_size = 17 # Diameter/radius for the circular opening algorithm's structuring element
+opening_kernel_size = 43 # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
 
 # Analysis Parameters
@@ -26,11 +26,11 @@ petiole_remove_completely = true  # true = remove petiole region completely and 
 
 # Pink Path Threshold Filtering Parameters
 enable_pink_threshold_filter = true  # Enable threshold filtering for DiegoPath_Pink values
-pink_threshold_value = 2.0  # Values <= this threshold will be set to zero (applied after petiole filtering)
+pink_threshold_value = 5.0  # Values <= this threshold will be set to zero (applied after petiole filtering)
 
 # Thornfiddle Analysis Parameters
 thornfiddle_smoothing_strength = 2.0  # Gaussian sigma for periodic smoothing of Thornfiddle_Path (range: 0.5-5.0)
 thornfiddle_interpolation_points = 1000  # Number of points to interpolate for spectral analysis
 
 # LEC Analysis Parameters
-lec_scaling_factor = 10.0  # Scaling factor
+lec_scaling_factor = 3.0  # Scaling factor

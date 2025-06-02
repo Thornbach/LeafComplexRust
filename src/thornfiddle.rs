@@ -417,6 +417,7 @@ pub fn calculate_edge_feature_density(
     colored_path_values: &[f64],
     enable_petiole_filter: bool,
     petiole_remove_completely: bool,
+    scaling_factor: f64,
 ) -> Result<f64> {
     if colored_path_values.is_empty() {
         return Err(LeafComplexError::Other("Empty colored path values for edge feature density calculation".to_string()));
@@ -463,9 +464,8 @@ pub fn calculate_edge_feature_density(
         };
         
         // Combined metric emphasizing both presence and size of features
-        // Note: Using a scaling factor of 10.0 since LEC_SCALING_FACTOR isn't accessible here
-        let edge_complexity = density * (1.0 + avg_magnitude.sqrt()) * 10.0;
-                
+        let edge_complexity = density * (1.0 + avg_magnitude.sqrt()) * scaling_factor;          
+
         println!("Feature density: {:.4}, Avg magnitude: {:.4}, Edge complexity: {:.4}", 
                  density, avg_magnitude, edge_complexity);
         

@@ -58,10 +58,10 @@ pub fn process_image(
         let debug_dir = PathBuf::from(&config.output_base_dir).join("debug");
         std::fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
         
-        save_image(&processed_image, debug_dir.join(format!("{}_original.png", filename)))?;
-        save_image(&opened_image, debug_dir.join(format!("{}_opened.png", filename)))?;
+        //save_image(&processed_image, debug_dir.join(format!("{}_original.png", filename)))?;
+        //save_image(&opened_image, debug_dir.join(format!("{}_opened.png", filename)))?;
         save_image(&marked_image, debug_dir.join(format!("{}_marked.png", filename)))?;
-        save_image(&lmc_image, debug_dir.join(format!("{}_lmc_image.png", filename)))?;
+        //save_image(&lmc_image, debug_dir.join(format!("{}_lmc_image.png", filename)))?;
     }
     
     // Step 3: Calculate reference points - SEPARATE for LEC and LMC
@@ -180,6 +180,7 @@ pub fn process_image(
         &pink_path_signal,
         config.enable_petiole_filter_edge_complexity,
         config.petiole_remove_completely,
+        config.lec_scaling_factor,
     ).unwrap_or_else(|e| {
         eprintln!("Warning: Edge complexity calculation failed for {}: {}", filename, e);
         0.0
