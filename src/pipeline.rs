@@ -159,22 +159,29 @@ pub fn process_image(
     // Step 6: Write feature CSVs
     write_lec_csv(&lec_features, &config.output_base_dir, &filename)?;
     
-    // Step 7: Calculate spectral entropy from Thornfiddle Path (using LMC features)
-    let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_thornfiddle_path(
-        &lmc_features,
-        config.thornfiddle_smoothing_strength
-    );
-    
+   // Step 7: Calculate spectral entropy from Thornfiddle Path (using LMC features)
+   let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_thornfiddle_path(
+    &lmc_features,
+    config.thornfiddle_smoothing_strength
+);
+
     // Step 7b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
     let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features);
-    
-    // Step 7c: Calculate spectral entropy from LEC contour shape
+
+    // Step 7c: Calculate approximate entropy from Pink Path (using LEC features, respects petiole filtering)
+    let approximate_entropy = thornfiddle::calculate_approximate_entropy_from_pink_path(
+        &lec_features,
+        config.approximate_entropy_m,
+        config.approximate_entropy_r,
+    );
+
+    // Step 7d: Calculate spectral entropy from LEC contour shape
     let spectral_entropy_contour = thornfiddle::calculate_spectral_entropy_from_contour(
         &lec_contour,
         config.thornfiddle_interpolation_points
     );
-    
-    // Step 7d: Calculate Edge Complexity from Pink Path values
+
+    // Step 7e: Calculate Edge Complexity from Pink Path values
     let pink_path_signal = thornfiddle::extract_pink_path_signal(&lec_features);
     let edge_complexity = thornfiddle::calculate_edge_feature_density(
         &pink_path_signal,
@@ -185,7 +192,7 @@ pub fn process_image(
         eprintln!("Warning: Edge complexity calculation failed for {}: {}", filename, e);
         0.0
     });
-    
+
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
@@ -197,12 +204,13 @@ pub fn process_image(
         spectral_entropy,
         spectral_entropy_pink,
         spectral_entropy_contour,
+        approximate_entropy,
         edge_complexity,
         lec_circularity,
         lmc_circularity,
         area,
     )?;
-    
+
     // Debug output if requested
     if debug {
         thornfiddle::debug_thornfiddle_values(
@@ -218,6 +226,7 @@ pub fn process_image(
         println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Spectral Entropy Pink: {:.6}", spectral_entropy_pink);
         println!("  Spectral Entropy Contour: {:.6}", spectral_entropy_contour);
+        println!("  Approximate Entropy: {:.6}", approximate_entropy);
         println!("  Edge Complexity: {:.6}", edge_complexity);
         println!("  LEC Circularity: {:.6}", lec_circularity);
         println!("  LMC Circularity: {:.6}", lmc_circularity);

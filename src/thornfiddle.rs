@@ -653,74 +653,7 @@ pub fn calculate_spectral_entropy_from_thornfiddle_path(
     (entropy * variation_factor, smoothed_signal)
 }
 
-/// Create Thornfiddle summary CSV with both circularity scores and all metrics
-pub fn create_thornfiddle_summary<P: AsRef<Path>>(
-    output_dir: P,
-    filename: &str,
-    subfolder: &str,
-    spectral_entropy: f64,
-    spectral_entropy_pink: f64,
-    spectral_entropy_contour: f64,
-    edge_complexity: f64,
-    lec_circularity: f64,
-    lmc_circularity: f64,
-    area: u32,
-) -> Result<()> {
-    // Create Thornfiddle directory if it doesn't exist
-    let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
-    fs::create_dir_all(&thornfiddle_dir).map_err(|e| LeafComplexError::Io(e))?;
-    
-    // Path to summary CSV
-    let summary_path = thornfiddle_dir.join("summary.csv");
-    
-    // Check if summary file already exists
-    let file_exists = summary_path.exists();
-    
-    // Open file in append mode if it exists, otherwise create new
-    let mut writer = if file_exists {
-        Writer::from_writer(fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&summary_path)
-            .map_err(|e| LeafComplexError::Io(e))?)
-    } else {
-        let mut writer = Writer::from_path(&summary_path)
-            .map_err(|e| LeafComplexError::CsvOutput(e))?;
-        
-        // Write header only for new file
-        writer.write_record(&[
-            "ID",
-            "Subfolder",
-            "Spectral_Entropy",
-            "Spectral_Entropy_Pink",
-            "Spectral_Entropy_Contour",
-            "Edge_Complexity",
-            "LEC_Circularity",
-            "LMC_Circularity",
-            "Area",
-        ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
-        
-        writer
-    };
-    
-    // Write data
-    writer.write_record(&[
-        filename,
-        subfolder,
-        &format!("{:.6}", spectral_entropy),
-        &format!("{:.6}", spectral_entropy_pink),
-        &format!("{:.6}", spectral_entropy_contour),
-        &format!("{:.6}", edge_complexity),
-        &format!("{:.6}", lec_circularity),
-        &format!("{:.6}", lmc_circularity),
-        &area.to_string(),
-    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
-    
-    // Flush writer
-    writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
-    
-    Ok(())
-}
+
 
 /// Debug Thornfiddle values with smoothed path information
 pub fn debug_thornfiddle_values(
@@ -777,5 +710,159 @@ pub fn debug_thornfiddle_values(
     }
     
     writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
+    Ok(())
+}
+
+pub fn calculate_approximate_entropy_from_pink_path(
+    features: &[MarginalPointFeatures],
+    m: usize,
+    r: f64,
+) -> f64 {
+    if features.is_empty() {
+        return 0.0;
+    }
+    
+    // Extract Pink Path signal (DiegoPath_Pink values)
+    let pink_signal = extract_pink_path_signal(features);
+    
+    if pink_signal.len() < 4 {
+        return 0.0;
+    }
+    
+    // NO SMOOTHING for Pink Path approximate entropy (same as spectral entropy approach)
+    
+    // Calculate statistics of the raw signal for adaptive tolerance
+    let mean = pink_signal.iter().sum::<f64>() / pink_signal.len() as f64;
+    let variance = pink_signal.iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f64>() / pink_signal.len() as f64;
+    let std_dev = variance.sqrt();
+    
+    // Adaptive tolerance based on signal characteristics
+    let adaptive_r = if std_dev > 1e-6 {
+        r * std_dev // Scale tolerance by signal variability
+    } else {
+        r // Use fixed tolerance for very low variation signals
+    };
+    
+    // Calculate approximate entropy
+    calculate_approximate_entropy(&pink_signal, m, adaptive_r)
+}
+
+/// Calculate approximate entropy for a given signal
+pub fn calculate_approximate_entropy(signal: &[f64], m: usize, r: f64) -> f64 {
+    let n = signal.len();
+    if n <= m {
+        return 0.0;
+    }
+    
+    let phi_m = calculate_phi(signal, m, r);
+    let phi_m1 = calculate_phi(signal, m + 1, r);
+    
+    phi_m - phi_m1
+}
+
+/// Helper function to calculate phi for approximate entropy
+fn calculate_phi(signal: &[f64], m: usize, r: f64) -> f64 {
+    let n = signal.len();
+    let mut sum = 0.0;
+    
+    for i in 0..=(n - m) {
+        let mut matches = 0;
+        
+        for j in 0..=(n - m) {
+            let max_diff = calculate_max_distance(&signal[i..i+m], &signal[j..j+m]);
+            
+            if max_diff <= r {
+                matches += 1;
+            }
+        }
+        
+        let ratio = matches as f64 / (n - m + 1) as f64;
+        if ratio > 1e-12 {
+            sum += ratio.ln();
+        }
+    }
+    
+    sum / (n - m + 1) as f64
+}
+
+/// Calculate maximum distance between two pattern vectors
+fn calculate_max_distance(pattern1: &[f64], pattern2: &[f64]) -> f64 {
+    pattern1.iter()
+        .zip(pattern2.iter())
+        .map(|(&a, &b)| (a - b).abs())
+        .fold(0.0, |acc, diff| acc.max(diff))
+}
+
+/// Create Thornfiddle summary CSV with both circularity scores and all metrics
+pub fn create_thornfiddle_summary<P: AsRef<Path>>(
+    output_dir: P,
+    filename: &str,
+    subfolder: &str,
+    spectral_entropy: f64,
+    spectral_entropy_pink: f64,
+    spectral_entropy_contour: f64,
+    approximate_entropy: f64,
+    edge_complexity: f64,
+    lec_circularity: f64,
+    lmc_circularity: f64,
+    area: u32,
+) -> Result<()> {
+    // Create Thornfiddle directory if it doesn't exist
+    let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
+    fs::create_dir_all(&thornfiddle_dir).map_err(|e| LeafComplexError::Io(e))?;
+    
+    // Path to summary CSV
+    let summary_path = thornfiddle_dir.join("summary.csv");
+    
+    // Check if summary file already exists
+    let file_exists = summary_path.exists();
+    
+    // Open file in append mode if it exists, otherwise create new
+    let mut writer = if file_exists {
+        Writer::from_writer(fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&summary_path)
+            .map_err(|e| LeafComplexError::Io(e))?)
+    } else {
+        let mut writer = Writer::from_path(&summary_path)
+            .map_err(|e| LeafComplexError::CsvOutput(e))?;
+        
+        // Write header only for new file
+        writer.write_record(&[
+            "ID",
+            "Subfolder",
+            "Spectral_Entropy",
+            "Spectral_Entropy_Pink",
+            "Spectral_Entropy_Contour",
+            "Approximate_Entropy",
+            "Edge_Complexity",
+            "LEC_Circularity",
+            "LMC_Circularity",
+            "Area",
+        ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+        
+        writer
+    };
+    
+    // Write data
+    writer.write_record(&[
+        filename,
+        subfolder,
+        &format!("{:.6}", spectral_entropy),
+        &format!("{:.6}", spectral_entropy_pink),
+        &format!("{:.6}", spectral_entropy_contour),
+        &format!("{:.6}", approximate_entropy),
+        &format!("{:.6}", edge_complexity),
+        &format!("{:.6}", lec_circularity),
+        &format!("{:.6}", lmc_circularity),
+        &area.to_string(),
+    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+    
+    // Flush writer
+    writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
+    
     Ok(())
 }

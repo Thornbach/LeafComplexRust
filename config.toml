@@ -32,5 +32,9 @@ pink_threshold_value = 5.0  # Values <= this threshold will be set to zero (appl
 thornfiddle_smoothing_strength = 2.0  # Gaussian sigma for periodic smoothing of Thornfiddle_Path (range: 0.5-5.0)
 thornfiddle_interpolation_points = 1000  # Number of points to interpolate for spectral analysis
 
+# Approximate Entropy Parameters
+approximate_entropy_m = 2  # Pattern length for ApEn calculation (typical: 1-3)
+approximate_entropy_r = 0.2  # Tolerance for ApEn calculation (typical: 0.1-0.3 * std_dev)
+
 # LEC Analysis Parameters
 lec_scaling_factor = 3.0  # Scaling factor

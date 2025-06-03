@@ -52,6 +52,13 @@ pub struct Config {
     #[serde(default = "default_thornfiddle_interpolation_points")]
     pub thornfiddle_interpolation_points: usize,
 
+    // Approximate Entropy parameters
+    #[serde(default = "default_approximate_entropy_m")]
+    pub approximate_entropy_m: usize,
+    
+    #[serde(default = "default_approximate_entropy_r")]
+    pub approximate_entropy_r: f64,
+
     // LEC scaling factor for edge complexity calculation
     #[serde(default = "default_lec_scaling_factor")]
     pub lec_scaling_factor: f64,
@@ -104,6 +111,14 @@ fn default_thornfiddle_interpolation_points() -> usize {
     1000 // Default to 1000 points for consistent analysis
 }
 
+fn default_approximate_entropy_m() -> usize {
+    2 // Default pattern length
+}
+
+fn default_approximate_entropy_r() -> f64 {
+    0.2 // Default tolerance (20% of std deviation)
+}
+
 fn default_lec_scaling_factor() -> f64 {
     3.0 // Default scaling factor for edge complexity
 }
@@ -145,6 +160,8 @@ impl Config {
             pink_threshold_value: 3.0,
             thornfiddle_smoothing_strength: 1.0,
             thornfiddle_interpolation_points: 1000,
+            approximate_entropy_m: 2,
+            approximate_entropy_r: 0.2,
             lec_scaling_factor: 3.0,
         }
     }
@@ -175,6 +192,19 @@ impl Config {
         if self.thornfiddle_interpolation_points < 10 {
             return Err(LeafComplexError::Config(
                 "thornfiddle_interpolation_points must be >= 10".to_string(),
+            ));
+        }
+
+        // Validate approximate entropy parameters
+        if self.approximate_entropy_m < 1 {
+            return Err(LeafComplexError::Config(
+                "approximate_entropy_m must be >= 1".to_string(),
+            ));
+        }
+
+        if self.approximate_entropy_r <= 0.0 {
+            return Err(LeafComplexError::Config(
+                "approximate_entropy_r must be > 0.0".to_string(),
             ));
         }
 
