@@ -1,5 +1,5 @@
 [package]
-name = "leaf_complex_r"
+name = "leaf_complex_rust"
 version = "1.0.0"
 edition = "2021"
 authors = ["Tobias Müller <tobimu@proton.me"]
@@ -7,10 +7,20 @@ description = "A tool for analyzing leaf morphology from PNG images"
 readme = "README.md"
 license = "MIT"
 
+# Add lib target for R package to use
+[lib]
+name = "leaf_complex_rust_lib"
+crate-type = ["rlib", "cdylib"] 
+
+[[bin]]
+name = "leaf_complex_rust_cli"
+path = "src/main.rs"
+
 [dependencies]
 # Core image processing
 image = "0.24.7"
 imageproc = "0.23.0"
+extendr-api = "0.7.0"
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
@@ -45,7 +55,6 @@ rustfft = "6.1.0"
 assert_approx_eq = "1.1.0"
 
 [profile.release]
-
 debug = true  # Include debug symbols
 opt-level = 2  # Use a slightly lower optimization level (3 is max)
 codegen-units = 1  # Slower compilation but more thorough optimizations
