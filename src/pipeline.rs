@@ -1,4 +1,4 @@
-// src/pipeline.rs - Updated with separate COM/Circularity and path-based spectral entropy
+// src/pipeline.rs - Updated with comprehensive shape analysis including bounding box and outline count
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ use crate::image_utils::resize_image;
 use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::{get_reference_point, get_lmc_reference_point};
-use crate::shape_analysis::analyze_shape;
+use crate::shape_analysis::analyze_shape_comprehensive; // Updated import
 use crate::thornfiddle;
 
 /// Process a single image
@@ -49,9 +49,22 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
-    // Calculate shape metrics for BOTH images
-    let (area, lec_circularity) = analyze_shape(&processed_image, config.marked_region_color_rgb);
-    let (_, lmc_circularity) = analyze_shape(&lmc_image, config.marked_region_color_rgb);
+    // Calculate comprehensive shape metrics including biological dimensions
+    // For the original image: get area, circularity, length, width, and outline count
+    let (area, lec_circularity, length, width, outline_count) = 
+        analyze_shape_comprehensive(&processed_image, config.marked_region_color_rgb);
+    
+    // For the LMC image: just get circularity (we already have the other measurements from original)
+    let (_, lmc_circularity) = crate::shape_analysis::analyze_shape(&lmc_image, config.marked_region_color_rgb);
+    
+    if debug {
+        println!("Shape analysis for {}:", filename);
+        println!("  Area: {} pixels", area);
+        println!("  Biological dimensions: {:.1} x {:.1} pixels", length, width);
+        println!("  Outline count: {} points", outline_count);
+        println!("  LEC Circularity: {:.6}", lec_circularity);
+        println!("  LMC Circularity: {:.6}", lmc_circularity);
+    }
     
     // Save debug images if requested
     if debug {
@@ -196,7 +209,7 @@ pub fn process_image(
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
-    // Step 8: Create Thornfiddle summary with all metrics
+    // Step 8: Create Thornfiddle summary with all metrics INCLUDING biological dimensions and outline measurements
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
@@ -209,6 +222,9 @@ pub fn process_image(
         lec_circularity,
         lmc_circularity,
         area,
+        length,         // NEW: biological length (longest distance between contour points)
+        width,          // NEW: biological width (perpendicular to length axis)
+        outline_count,  // outline point count
     )?;
 
     // Debug output if requested
@@ -231,6 +247,8 @@ pub fn process_image(
         println!("  LEC Circularity: {:.6}", lec_circularity);
         println!("  LMC Circularity: {:.6}", lmc_circularity);
         println!("  Area: {} pixels", area);
+        println!("  Biological Dimensions: {:.1} x {:.1} pixels", length, width);
+        println!("  Outline Count: {} points", outline_count);
         println!("  LEC features: {}", lec_features.len());
         println!("  LMC features: {}", lmc_features.len());
         println!("  Reference points - LEC: {:?}, LMC: {:?}", lec_reference_point, lmc_reference_point);

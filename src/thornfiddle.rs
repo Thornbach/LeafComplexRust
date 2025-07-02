@@ -1,4 +1,4 @@
-// src/thornfiddle.rs - Updated with Periodic Gaussian Smoothing and Path-based Spectral Entropy
+// src/thornfiddle.rs - Updated create_thornfiddle_summary function
 
 use std::path::Path;
 use std::fs;
@@ -217,6 +217,7 @@ pub fn calculate_spectral_entropy_from_contour(
     
     entropy * magnitude_factor
 }
+
 /// Detect petiole sequence in a signal using outlier analysis
 /// Returns the indices of the detected petiole sequence (longest sequence with extreme values)
 pub fn detect_petiole_sequence(signal: &[f64], threshold: f64) -> Option<Vec<usize>> {
@@ -412,6 +413,7 @@ pub fn filter_petiole_from_lec_features(
     
     (working_features, petiole_indices)
 }
+
 /// Calculate Edge Complexity using the provided algorithm with configurable petiole filtering
 pub fn calculate_edge_feature_density(
     colored_path_values: &[f64],
@@ -653,8 +655,6 @@ pub fn calculate_spectral_entropy_from_thornfiddle_path(
     (entropy * variation_factor, smoothed_signal)
 }
 
-
-
 /// Debug Thornfiddle values with smoothed path information
 pub fn debug_thornfiddle_values(
     features: &[MarginalPointFeatures],
@@ -795,7 +795,8 @@ fn calculate_max_distance(pattern1: &[f64], pattern2: &[f64]) -> f64 {
         .fold(0.0, |acc, diff| acc.max(diff))
 }
 
-/// Create Thornfiddle summary CSV with both circularity scores and all metrics
+/// Create Thornfiddle summary CSV with circularity scores, biological dimensions, and outline count
+/// Updated to use biological length/width instead of bounding box dimensions
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
@@ -808,6 +809,9 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     lec_circularity: f64,
     lmc_circularity: f64,
     area: u32,
+    length: f64,          // NEW: biological length (longest distance between contour points)
+    width: f64,           // NEW: biological width (perpendicular to length axis)
+    outline_count: u32,   // outline point count
 ) -> Result<()> {
     // Create Thornfiddle directory if it doesn't exist
     let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
@@ -830,7 +834,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header only for new file
+        // Write header only for new file - UPDATED with biological dimension headers
         writer.write_record(&[
             "ID",
             "Subfolder",
@@ -842,12 +846,15 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
             "LEC_Circularity",
             "LMC_Circularity",
             "Area",
+            "Length",          // CHANGED from "Width" to "Length" (biological)
+            "Width",           // CHANGED from "Height" to "Width" (biological)
+            "Outline_Count",
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
         
         writer
     };
     
-    // Write data
+    // Write data - UPDATED with biological dimensions
     writer.write_record(&[
         filename,
         subfolder,
@@ -859,6 +866,9 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         &format!("{:.6}", lec_circularity),
         &format!("{:.6}", lmc_circularity),
         &area.to_string(),
+        &format!("{:.1}", length),    // CHANGED: now biological length
+        &format!("{:.1}", width),     // CHANGED: now biological width  
+        &outline_count.to_string(),
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Flush writer
