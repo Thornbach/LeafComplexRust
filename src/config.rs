@@ -62,6 +62,16 @@ pub struct Config {
     // LEC scaling factor for edge complexity calculation
     #[serde(default = "default_lec_scaling_factor")]
     pub lec_scaling_factor: f64,
+    
+    // NEW: Thornfiddle Lobe Detection Parameters
+    #[serde(default = "default_thornfiddle_opening_size_percentage")]
+    pub thornfiddle_opening_size_percentage: f64,
+    
+    #[serde(default = "default_thornfiddle_pixel_threshold")]
+    pub thornfiddle_pixel_threshold: u32,
+    
+    #[serde(default = "default_thornfiddle_marked_color_rgb")]
+    pub thornfiddle_marked_color_rgb: [u8; 3],
 }
 
 /// Reference point choice enum
@@ -123,6 +133,19 @@ fn default_lec_scaling_factor() -> f64 {
     3.0 // Default scaling factor for edge complexity
 }
 
+// NEW: Thornfiddle default functions
+fn default_thornfiddle_opening_size_percentage() -> f64 {
+    10.0 // 10% of image width for aggressive opening
+}
+
+fn default_thornfiddle_pixel_threshold() -> u32 {
+    3 // Minimum golden pixels to trigger harmonic chain
+}
+
+fn default_thornfiddle_marked_color_rgb() -> [u8; 3] {
+    [255, 215, 0] // Golden yellow for lobe regions
+}
+
 impl Config {
     /// Load configuration from a TOML file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
@@ -163,6 +186,9 @@ impl Config {
             approximate_entropy_m: 2,
             approximate_entropy_r: 0.2,
             lec_scaling_factor: 3.0,
+            thornfiddle_opening_size_percentage: 10.0,
+            thornfiddle_pixel_threshold: 3,
+            thornfiddle_marked_color_rgb: [255, 215, 0],
         }
     }
 
@@ -205,6 +231,19 @@ impl Config {
         if self.approximate_entropy_r <= 0.0 {
             return Err(LeafComplexError::Config(
                 "approximate_entropy_r must be > 0.0".to_string(),
+            ));
+        }
+        
+        // NEW: Validate thornfiddle parameters
+        if self.thornfiddle_opening_size_percentage <= 0.0 || self.thornfiddle_opening_size_percentage > 50.0 {
+            return Err(LeafComplexError::Config(
+                "thornfiddle_opening_size_percentage must be between 0.0 and 50.0".to_string(),
+            ));
+        }
+        
+        if self.thornfiddle_pixel_threshold == 0 {
+            return Err(LeafComplexError::Config(
+                "thornfiddle_pixel_threshold must be > 0".to_string(),
             ));
         }
 

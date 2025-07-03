@@ -1,3 +1,5 @@
+// Updated src/feature_extraction.rs - Added Thornfiddle_Path_Harmonic field
+
 use image::RgbaImage;
 
 use crate::errors::{LeafComplexError, Result};
@@ -26,6 +28,9 @@ pub struct MarginalPointFeatures {
     pub diego_path_length: f64,
     pub diego_path_perc: f64,
     pub diego_path_pink: Option<u32>, // Pink pixels along the diego path
+    
+    // NEW: Harmonic Thornfiddle Path
+    pub thornfiddle_path_harmonic: f64,
 }
 
 pub fn generate_features(
@@ -187,7 +192,7 @@ pub fn generate_features(
             }
         }
         
-        // Create features structure
+        // Create features structure - NOTE: thornfiddle_path_harmonic will be calculated later
         let point_features = MarginalPointFeatures {
             point_index: idx,
             straight_path_length,
@@ -202,6 +207,7 @@ pub fn generate_features(
             diego_path_length,
             diego_path_perc,
             diego_path_pink,
+            thornfiddle_path_harmonic: 0.0, // Will be set later after all features are generated
         };
         
         features.push(point_features);

@@ -1,3 +1,5 @@
+// Updated src/output.rs - Added Thornfiddle_Path_Harmonic column
+
 use std::fs;
 use std::path::Path;
 use csv::Writer;
@@ -23,7 +25,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - include DiegoPath fields
+    // Write header - include DiegoPath and Harmonic fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -38,6 +40,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
         "DiegoPath_Length",
         "DiegoPath_Perc",
         "DiegoPath_Pink",
+        "Thornfiddle_Path_Harmonic",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
@@ -56,6 +59,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
             format!("{:.6}", feature.diego_path_length),
             format!("{:.6}", feature.diego_path_perc),
             feature.diego_path_pink.unwrap_or(0).to_string(),
+            format!("{:.6}", feature.thornfiddle_path_harmonic),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
@@ -82,7 +86,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - include DiegoPath, Thornfiddle, and Thornfiddle_Path_Smoothed fields
+    // Write header - include DiegoPath, Thornfiddle, Thornfiddle_Path_Smoothed, and Harmonic fields
     writer.write_record(&[
         "Point_Index",
         "StraightPath_Length",
@@ -99,6 +103,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
         "Thornfiddle_Multiplier",
         "Thornfiddle_Path",
         "Thornfiddle_Path_Smoothed",
+        "Thornfiddle_Path_Harmonic",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
@@ -130,6 +135,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
             format!("{:.6}", thornfiddle_multiplier),
             format!("{:.6}", thornfiddle_path),
             format!("{:.6}", thornfiddle_path_smoothed),
+            format!("{:.6}", feature.thornfiddle_path_harmonic),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     

@@ -1,13 +1,27 @@
-// src/thornfiddle.rs - Updated create_thornfiddle_summary function
+// src/thornfiddle.rs - Complete file with Golden Pixel Lobe Detection
 
 use std::path::Path;
 use std::fs;
 use std::collections::HashSet;
 use rustfft::{FftPlanner, num_complex::Complex};
 use csv::Writer;
+use std::f64::consts::PI;
+use image::RgbaImage;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::MarginalPointFeatures;
+use crate::image_utils::has_rgb_color;
+use crate::path_algorithms::trace_straight_line;
+
+/// Represents a chain of consecutive golden pixel crossings (lobes)
+#[derive(Debug, Clone)]
+struct GoldenChain {
+    start_index: usize,
+    end_index: usize,
+    length: usize,
+    total_golden_pixels: u32,
+    max_crossing_count: u32,
+}
 
 /// Calculate a simple Thornfiddle Multiplier based on path complexity
 pub fn calculate_thornfiddle_multiplier(feature: &MarginalPointFeatures) -> f64 {
@@ -33,10 +47,386 @@ pub fn calculate_thornfiddle_path(feature: &MarginalPointFeatures) -> f64 {
     feature.diego_path_length * multiplier
 }
 
+/// NEW: Calculate Thornfiddle Path with Golden Pixel Harmonic enhancement
+pub fn calculate_thornfiddle_path_harmonic(
+    features: &[MarginalPointFeatures],
+    leaf_circumference: f64,
+    thornfiddle_image: &RgbaImage,
+    reference_point: (u32, u32),
+    contour_points: &[(u32, u32)],
+    golden_color: [u8; 3],
+    pixel_threshold: u32,
+) -> Vec<f64> {
+    if features.is_empty() {
+        return Vec::new();
+    }
+    
+    println!("Calculating harmonic Thornfiddle with golden pixel detection");
+    
+    // Step 1: Detect golden chains based on pixel crossings
+    let golden_chains = detect_golden_chains(
+        features,
+        thornfiddle_image,
+        reference_point,
+        contour_points,
+        golden_color,
+        pixel_threshold,
+    );
+    
+    println!("Detected {} golden chains", golden_chains.len());
+    
+    // Step 2: Calculate base Thornfiddle values
+    let base_thornfiddle: Vec<f64> = features.iter()
+        .map(|feature| calculate_thornfiddle_path(feature))
+        .collect();
+    
+    // Step 3: Calculate global complexity across all chains
+    let global_complexity = calculate_global_golden_complexity(&golden_chains);
+    
+    // Step 4: Apply harmonics to each point
+    let mut harmonic_thornfiddle = base_thornfiddle.clone();
+    
+    for (chain_index, chain) in golden_chains.iter().enumerate() {
+        apply_golden_chain_harmonics(
+            &mut harmonic_thornfiddle,
+            chain,
+            chain_index,
+            global_complexity,
+            leaf_circumference,
+            features,
+        );
+    }
+    
+    // Step 5: Handle additive effects for overlapping chains
+    apply_additive_harmonic_effects(&mut harmonic_thornfiddle, &golden_chains);
+    
+    println!("Harmonic enhancement complete");
+    harmonic_thornfiddle
+}
+
+/// Count golden pixels crossed by a path
+fn count_golden_pixels_crossed(
+    path: &[(u32, u32)],
+    thornfiddle_image: &RgbaImage,
+    golden_color: [u8; 3],
+) -> u32 {
+    let mut golden_count = 0;
+    let (width, height) = thornfiddle_image.dimensions();
+    
+    for &(x, y) in path {
+        if x < width && y < height {
+            let pixel = thornfiddle_image.get_pixel(x, y);
+            if has_rgb_color(pixel, golden_color) {
+                golden_count += 1;
+            }
+        }
+    }
+    
+    golden_count
+}
+
+/// Detect chains of consecutive golden pixel crossings
+fn detect_golden_chains(
+    features: &[MarginalPointFeatures],
+    thornfiddle_image: &RgbaImage,
+    reference_point: (u32, u32),
+    contour_points: &[(u32, u32)],
+    golden_color: [u8; 3],
+    pixel_threshold: u32,
+) -> Vec<GoldenChain> {
+    let mut chains = Vec::new();
+    let mut current_chain_start: Option<usize> = None;
+    let mut chain_golden_counts = Vec::new();
+    
+    for (i, feature) in features.iter().enumerate() {
+        if i >= contour_points.len() {
+            break;
+        }
+        
+        let marginal_point = contour_points[i];
+        
+        // Get the path to analyze (prioritize DiegoPath if it differs significantly from StraightPath)
+        let path_to_check = if feature.diego_path_perc > 101.0 {
+            // DiegoPath differs significantly, use a calculated Diego path
+            // For this implementation, we'll use StraightPath as approximation
+            // In full implementation, you'd store the actual Diego path points
+            trace_straight_line(reference_point, marginal_point)
+        } else {
+            // Use StraightPath
+            trace_straight_line(reference_point, marginal_point)
+        };
+        
+        // Count golden pixels crossed by this path
+        let golden_count = count_golden_pixels_crossed(&path_to_check, thornfiddle_image, golden_color);
+        let crosses_threshold = golden_count >= pixel_threshold;
+        
+        if crosses_threshold {
+            // Start or continue chain
+            if current_chain_start.is_none() {
+                current_chain_start = Some(i);
+                chain_golden_counts.clear();
+            }
+            chain_golden_counts.push(golden_count);
+        } else if let Some(start) = current_chain_start {
+            // End current chain
+            if !chain_golden_counts.is_empty() {
+                let total_golden_pixels: u32 = chain_golden_counts.iter().sum();
+                let max_crossing_count = *chain_golden_counts.iter().max().unwrap_or(&0);
+                
+                chains.push(GoldenChain {
+                    start_index: start,
+                    end_index: i - 1,
+                    length: i - start,
+                    total_golden_pixels,
+                    max_crossing_count,
+                });
+                
+                println!("Golden chain detected: indices {}-{}, length {}, total golden pixels {}", 
+                         start, i - 1, i - start, total_golden_pixels);
+            }
+            current_chain_start = None;
+            chain_golden_counts.clear();
+        }
+    }
+    
+    // Handle chain that extends to end of contour
+    if let Some(start) = current_chain_start {
+        if !chain_golden_counts.is_empty() {
+            let total_golden_pixels: u32 = chain_golden_counts.iter().sum();
+            let max_crossing_count = *chain_golden_counts.iter().max().unwrap_or(&0);
+            
+            chains.push(GoldenChain {
+                start_index: start,
+                end_index: features.len() - 1,
+                length: features.len() - start,
+                total_golden_pixels,
+                max_crossing_count,
+            });
+            
+            println!("Golden chain detected (end): indices {}-{}, length {}, total golden pixels {}", 
+                     start, features.len() - 1, features.len() - start, total_golden_pixels);
+        }
+    }
+    
+    chains
+}
+
+/// Calculate global complexity factor based on all golden chains in the leaf
+fn calculate_global_golden_complexity(chains: &[GoldenChain]) -> f64 {
+    if chains.is_empty() {
+        return 0.0;
+    }
+    
+    // Combine number of chains, their lengths, and golden pixel intensity
+    let total_chain_length: usize = chains.iter().map(|c| c.length).sum();
+    let total_golden_pixels: u32 = chains.iter().map(|c| c.total_golden_pixels).sum();
+    let avg_golden_intensity: f64 = total_golden_pixels as f64 / chains.len() as f64;
+    let chain_count_factor = (chains.len() as f64).ln() + 1.0;
+    
+    // Global complexity increases with more chains, longer chains, and higher golden pixel density
+    chain_count_factor * (total_chain_length as f64).sqrt() * avg_golden_intensity.sqrt()
+}
+
+/// Apply harmonic enhancement to a specific golden chain
+fn apply_golden_chain_harmonics(
+    harmonic_values: &mut [f64],
+    chain: &GoldenChain,
+    chain_index: usize,
+    global_complexity: f64,
+    leaf_circumference: f64,
+    features: &[MarginalPointFeatures],
+) {
+    // Calculate harmonic parameters
+    let max_harmonics = calculate_max_harmonics(chain.length);
+    let base_frequency = calculate_base_frequency(leaf_circumference, features.len());
+    let accumulated_stress = calculate_accumulated_stress(chain_index, global_complexity);
+    
+    for i in chain.start_index..=chain.end_index {
+        if i >= harmonic_values.len() {
+            break;
+        }
+        
+        let chain_position = i - chain.start_index;
+        let position_ratio = chain_position as f64 / chain.length as f64;
+        
+        // Golden pixel intensity for this position (simplified)
+        let golden_intensity = chain.total_golden_pixels as f64 / chain.length as f64;
+        
+        // Calculate chaos factor (logarithmic progression with golden enhancement)
+        let chaos_factor = calculate_golden_chaos_factor(
+            position_ratio,
+            accumulated_stress,
+            golden_intensity,
+            chain.max_crossing_count as f64,
+        );
+        
+        // Generate harmonic component using natural overtone series
+        let harmonic_component = generate_harmonic_component(
+            chain_position,
+            max_harmonics,
+            base_frequency,
+            chaos_factor,
+            position_ratio,
+        );
+        
+        // Apply harmonic enhancement: base + (base * harmonic_factor)
+        let base_value = harmonic_values[i];
+        harmonic_values[i] = base_value + (base_value * harmonic_component);
+    }
+}
+
+/// Calculate maximum harmonics using Natural Overtone Series
+fn calculate_max_harmonics(chain_length: usize) -> usize {
+    if chain_length == 0 {
+        return 0;
+    }
+    
+    // Natural Overtone Series: floor(log2(chain_length)) + 3
+    let log_component = (chain_length as f64).log2().floor() as usize;
+    (log_component + 3).max(1).min(12) // Cap at 12 for computational efficiency
+}
+
+/// Calculate base frequency proportional to leaf circumference
+fn calculate_base_frequency(circumference: f64, contour_points: usize) -> f64 {
+    if circumference <= 0.0 || contour_points == 0 {
+        return 1.0;
+    }
+    
+    // Base frequency inversely related to circumference
+    // Larger leaves have lower base frequencies (like larger instruments)
+    let normalized_circumference = circumference / contour_points as f64;
+    2.0 / (1.0 + normalized_circumference / 10.0)
+}
+
+/// Calculate accumulated stress from previous chains
+fn calculate_accumulated_stress(chain_index: usize, global_complexity: f64) -> f64 {
+    // Each subsequent chain starts with higher stress
+    let chain_stress = (chain_index as f64 * 0.3).tanh(); // Saturates at high values
+    chain_stress * global_complexity
+}
+
+/// Calculate chaos factor using logarithmic progression with golden pixel enhancement
+fn calculate_golden_chaos_factor(
+    position_ratio: f64,
+    accumulated_stress: f64,
+    golden_intensity: f64,
+    max_golden_count: f64,
+) -> f64 {
+    // Logarithmic base progression
+    let log_progression = (1.0 + position_ratio * 9.0).ln() / 10.0_f64.ln();
+    
+    // Oscillating component for lobe variations
+    let oscillation = (position_ratio * PI * 3.0).sin() * 0.3 + 1.0;
+    
+    // Golden pixel intensity scaling
+    let golden_factor = if max_golden_count > 0.0 {
+        golden_intensity / max_golden_count
+    } else {
+        1.0
+    };
+    
+    // Combine all factors
+    let base_chaos = log_progression * oscillation * golden_factor;
+    let stress_enhanced = base_chaos * (1.0 + accumulated_stress);
+    
+    stress_enhanced.min(2.0) // Cap to prevent extreme values
+}
+
+/// Generate harmonic component using natural overtone series
+fn generate_harmonic_component(
+    position: usize,
+    max_harmonics: usize,
+    base_frequency: f64,
+    chaos_factor: f64,
+    position_ratio: f64,
+) -> f64 {
+    if max_harmonics == 0 {
+        return 0.0;
+    }
+    
+    let mut harmonic_sum = 0.0;
+    
+    // Deterministic seed for reproducibility
+    let seed = (position as f64 * 1000.0 + base_frequency * 100.0) as u64;
+    let mut rng_state = seed;
+    
+    // Generate natural overtone series (1x, 2x, 3x, 4x, ...)
+    for harmonic_index in 1..=max_harmonics {
+        let frequency = base_frequency * harmonic_index as f64;
+        let amplitude = 1.0 / harmonic_index as f64; // Natural amplitude decay
+        
+        // Add deterministic but unpredictable phase based on position and chaos
+        rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+        let phase_offset = (rng_state as f64 / u64::MAX as f64) * PI * 2.0;
+        
+        // Generate harmonic with chaos-influenced amplitude
+        let harmonic_value = amplitude * chaos_factor * 
+            (frequency * position_ratio * PI * 2.0 + phase_offset).sin();
+        
+        harmonic_sum += harmonic_value;
+    }
+    
+    // Normalize by number of harmonics to prevent explosion
+    harmonic_sum / max_harmonics as f64
+}
+
+/// Apply additive effects for overlapping chains
+fn apply_additive_harmonic_effects(
+    harmonic_values: &mut [f64],
+    chains: &[GoldenChain],
+) {
+    // Track which points are affected by multiple chains
+    let mut point_chain_counts = vec![0usize; harmonic_values.len()];
+    
+    // Count how many chains affect each point
+    for chain in chains {
+        for i in chain.start_index..=chain.end_index {
+            if i < point_chain_counts.len() {
+                point_chain_counts[i] += 1;
+            }
+        }
+    }
+    
+    // Apply additive enhancement for points affected by multiple chains
+    for (i, &chain_count) in point_chain_counts.iter().enumerate() {
+        if chain_count > 1 && i < harmonic_values.len() {
+            // Additive factor: more chains = stronger effect, but with diminishing returns
+            let additive_factor = 1.0 + (chain_count as f64 - 1.0) * 0.3;
+            harmonic_values[i] *= additive_factor;
+        }
+    }
+}
+
+/// Calculate leaf circumference from contour points (for external use)
+pub fn calculate_leaf_circumference(contour: &[(u32, u32)]) -> f64 {
+    if contour.len() < 2 {
+        return 0.0;
+    }
+    
+    let mut circumference = 0.0;
+    for i in 0..contour.len() {
+        let current = contour[i];
+        let next = contour[(i + 1) % contour.len()];
+        
+        let dx = next.0 as f64 - current.0 as f64;
+        let dy = next.1 as f64 - current.1 as f64;
+        circumference += (dx * dx + dy * dy).sqrt();
+    }
+    
+    circumference
+}
+
 /// Extract Thornfiddle Path values from features
 pub fn extract_thornfiddle_path_signal(features: &[MarginalPointFeatures]) -> Vec<f64> {
     features.iter()
         .map(|feature| calculate_thornfiddle_path(feature))
+        .collect()
+}
+
+/// Extract Harmonic Thornfiddle Path values from features  
+pub fn extract_harmonic_thornfiddle_path_signal(features: &[MarginalPointFeatures]) -> Vec<f64> {
+    features.iter()
+        .map(|feature| feature.thornfiddle_path_harmonic)
         .collect()
 }
 
@@ -598,7 +988,64 @@ fn calculate_shannon_entropy(powers: &[f64]) -> f64 {
     }
 }
 
-/// Calculate spectral entropy from Thornfiddle Path signal
+/// Calculate spectral entropy from Harmonic Thornfiddle Path signal (NEW!)
+pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
+    features: &[MarginalPointFeatures],
+    smoothing_strength: f64
+) -> (f64, Vec<f64>) {
+    if features.is_empty() {
+        return (0.0, Vec::new());
+    }
+    
+    // Extract Harmonic Thornfiddle Path signal
+    let harmonic_signal = extract_harmonic_thornfiddle_path_signal(features);
+    
+    if harmonic_signal.len() < 4 {
+        return (0.0, harmonic_signal);
+    }
+    
+    // Apply periodic-aware Gaussian smoothing
+    let window_size = (harmonic_signal.len() / 8).max(3).min(21); // Adaptive window size
+    let sigma = smoothing_strength.max(0.5); // Ensure minimum sigma
+    let smoothed_signal = periodic_gaussian_smooth(&harmonic_signal, window_size, sigma);
+    
+    // Calculate statistics of the smoothed signal
+    let mean = smoothed_signal.iter().sum::<f64>() / smoothed_signal.len() as f64;
+    let variance = smoothed_signal.iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f64>() / smoothed_signal.len() as f64;
+    let std_dev = variance.sqrt();
+    
+    // Threshold for "simple" signals based on coefficient of variation
+    let coefficient_of_variation = if mean > 1e-6 { std_dev / mean } else { 0.0 };
+    
+    if coefficient_of_variation < 0.01 {
+        // Very low variation = very low entropy
+        return (0.001 + coefficient_of_variation * 0.01, smoothed_signal);
+    }
+    
+    if coefficient_of_variation < 0.05 {
+        // Low variation = low entropy  
+        return (0.01 + coefficient_of_variation * 0.1, smoothed_signal);
+    }
+    
+    // For signals with significant variation, proceed with spectral analysis
+    let powers = calculate_power_spectrum_periodic(&smoothed_signal);
+    if powers.is_empty() {
+        return (0.0, smoothed_signal);
+    }
+    
+    // Calculate Shannon entropy
+    let entropy = calculate_shannon_entropy(&powers);
+    
+    // Scale entropy based on the coefficient of variation
+    // More relative variation = higher potential entropy
+    let variation_factor = (coefficient_of_variation * 2.0).min(1.0); // Cap at 1.0
+    
+    (entropy * variation_factor, smoothed_signal)
+}
+
+/// Calculate spectral entropy from Thornfiddle Path signal (DEPRECATED - use harmonic version)
 pub fn calculate_spectral_entropy_from_thornfiddle_path(
     features: &[MarginalPointFeatures],
     smoothing_strength: f64
@@ -680,6 +1127,7 @@ pub fn debug_thornfiddle_values(
         "Thornfiddle_Multiplier",
         "Thornfiddle_Path",
         "Thornfiddle_Path_Smoothed",
+        "Thornfiddle_Path_Harmonic",
         "Spectral_Entropy",
         "Smoothing_Strength",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
@@ -704,6 +1152,7 @@ pub fn debug_thornfiddle_values(
             &format!("{:.6}", multiplier),
             &format!("{:.6}", thornfiddle_path),
             &format!("{:.6}", smoothed_value),
+            &format!("{:.6}", feature.thornfiddle_path_harmonic),
             &format!("{:.6}", spectral_entropy),
             &format!("{:.6}", smoothing_strength),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;

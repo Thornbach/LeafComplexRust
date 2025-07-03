@@ -1,4 +1,4 @@
-// src/pipeline.rs - Updated with comprehensive shape analysis including bounding box and outline count
+// src/pipeline.rs - Updated with Golden Pixel Thornfiddle implementation
 
 use std::path::PathBuf;
 
@@ -7,11 +7,11 @@ use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::generate_features;
 use crate::image_io::{InputImage, save_image};
 use crate::image_utils::resize_image;
-use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component};
+use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component, create_thornfiddle_image};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::{get_reference_point, get_lmc_reference_point};
-use crate::shape_analysis::analyze_shape_comprehensive; // Updated import
-use crate::thornfiddle;
+use crate::shape_analysis::analyze_shape_comprehensive;
+use crate::thornfiddle::{self, calculate_thornfiddle_path_harmonic, calculate_leaf_circumference};
 
 /// Process a single image
 pub fn process_image(
@@ -49,6 +49,13 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
+    // NEW: Step 3: Create Thornfiddle Image with golden lobe regions
+    let thornfiddle_image = create_thornfiddle_image(
+        &lmc_image,
+        config.thornfiddle_opening_size_percentage,
+        config.thornfiddle_marked_color_rgb,
+    )?;
+    
     // Calculate comprehensive shape metrics including biological dimensions
     // For the original image: get area, circularity, length, width, and outline count
     let (area, lec_circularity, length, width, outline_count) = 
@@ -75,9 +82,11 @@ pub fn process_image(
         //save_image(&opened_image, debug_dir.join(format!("{}_opened.png", filename)))?;
         save_image(&marked_image, debug_dir.join(format!("{}_marked.png", filename)))?;
         //save_image(&lmc_image, debug_dir.join(format!("{}_lmc_image.png", filename)))?;
+        // NEW: Save Thornfiddle image showing golden lobe regions
+        save_image(&thornfiddle_image, debug_dir.join(format!("{}_thornfiddle.png", filename)))?;
     }
     
-    // Step 3: Calculate reference points - SEPARATE for LEC and LMC
+    // Step 4: Calculate reference points - SEPARATE for LEC and LMC
     
     // LEC reference point (uses original processed image for COM if selected)
     let lec_reference_point = get_reference_point(
@@ -100,7 +109,7 @@ pub fn process_image(
         println!("LMC reference point for {}: {:?}", filename, lmc_reference_point);
     }
     
-    // Step 4: LEC Analysis (Pink regions are OPAQUE)
+    // Step 5: LEC Analysis (Pink regions are OPAQUE)
     let lec_contour = trace_contour(
         &marked_image,
         true, // is_pink_opaque = true for LEC
@@ -129,6 +138,26 @@ pub fn process_image(
         config.pink_threshold_value,
     );
     
+    // NEW: Step 5.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LEC features
+    let lec_circumference = calculate_leaf_circumference(&lec_contour);
+    let lec_harmonic_values = calculate_thornfiddle_path_harmonic(
+        &lec_features,
+        lec_circumference,
+        &thornfiddle_image,
+        lec_reference_point,
+        &lec_contour,
+        config.thornfiddle_marked_color_rgb,
+        config.thornfiddle_pixel_threshold,
+    );
+    
+    // Update LEC features with harmonic values
+    let mut lec_features_with_harmonic = lec_features;
+    for (i, feature) in lec_features_with_harmonic.iter_mut().enumerate() {
+        if let Some(&harmonic_value) = lec_harmonic_values.get(i) {
+            feature.thornfiddle_path_harmonic = harmonic_value;
+        }
+    }
+    
     if debug {
         println!("LEC contour points: {}", lec_contour.len());
         if let Some(ref petiole_indices) = petiole_info {
@@ -147,7 +176,7 @@ pub fn process_image(
         }
     }
     
-    // Step 5: LMC Analysis (Pink regions are TRANSPARENT) - Use LMC reference point
+    // Step 6: LMC Analysis (Pink regions are TRANSPARENT) - Use LMC reference point
     let lmc_contour = trace_contour(
         &lmc_image,
         false, // is_pink_opaque = false for LMC
@@ -165,37 +194,57 @@ pub fn process_image(
         false, // is_lec = false
     )?;
     
+    // NEW: Step 6.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LMC features  
+    let lmc_circumference = calculate_leaf_circumference(&lmc_contour);
+    let lmc_harmonic_values = calculate_thornfiddle_path_harmonic(
+        &lmc_features,
+        lmc_circumference,
+        &thornfiddle_image,
+        lmc_reference_point,
+        &lmc_contour,
+        config.thornfiddle_marked_color_rgb,
+        config.thornfiddle_pixel_threshold,
+    );
+    
+    // Update LMC features with harmonic values
+    let mut lmc_features_with_harmonic = lmc_features;
+    for (i, feature) in lmc_features_with_harmonic.iter_mut().enumerate() {
+        if let Some(&harmonic_value) = lmc_harmonic_values.get(i) {
+            feature.thornfiddle_path_harmonic = harmonic_value;
+        }
+    }
+    
     if debug {
         println!("LMC contour points: {}", lmc_contour.len());
     }
     
-    // Step 6: Write feature CSVs
-    write_lec_csv(&lec_features, &config.output_base_dir, &filename)?;
+    // Step 7: Write feature CSVs
+    write_lec_csv(&lec_features_with_harmonic, &config.output_base_dir, &filename)?;
     
-   // Step 7: Calculate spectral entropy from Thornfiddle Path (using LMC features)
-   let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_thornfiddle_path(
-    &lmc_features,
+   // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path (using LMC features)
+   let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
+    &lmc_features_with_harmonic,
     config.thornfiddle_smoothing_strength
 );
 
-    // Step 7b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
-    let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features);
+    // Step 8b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
+    let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features_with_harmonic);
 
-    // Step 7c: Calculate approximate entropy from Pink Path (using LEC features, respects petiole filtering)
+    // Step 8c: Calculate approximate entropy from Pink Path (using LEC features, respects petiole filtering)
     let approximate_entropy = thornfiddle::calculate_approximate_entropy_from_pink_path(
-        &lec_features,
+        &lec_features_with_harmonic,
         config.approximate_entropy_m,
         config.approximate_entropy_r,
     );
 
-    // Step 7d: Calculate spectral entropy from LEC contour shape
+    // Step 8d: Calculate spectral entropy from LEC contour shape
     let spectral_entropy_contour = thornfiddle::calculate_spectral_entropy_from_contour(
         &lec_contour,
         config.thornfiddle_interpolation_points
     );
 
-    // Step 7e: Calculate Edge Complexity from Pink Path values
-    let pink_path_signal = thornfiddle::extract_pink_path_signal(&lec_features);
+    // Step 8e: Calculate Edge Complexity from Pink Path values
+    let pink_path_signal = thornfiddle::extract_pink_path_signal(&lec_features_with_harmonic);
     let edge_complexity = thornfiddle::calculate_edge_feature_density(
         &pink_path_signal,
         config.enable_petiole_filter_edge_complexity,
@@ -207,9 +256,9 @@ pub fn process_image(
     });
 
     // Write LMC CSV with smoothed Thornfiddle Path values
-    write_lmc_csv(&lmc_features, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
+    write_lmc_csv(&lmc_features_with_harmonic, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
-    // Step 8: Create Thornfiddle summary with all metrics INCLUDING biological dimensions and outline measurements
+    // Step 9: Create Thornfiddle summary with all metrics INCLUDING biological dimensions and outline measurements
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
@@ -230,7 +279,7 @@ pub fn process_image(
     // Debug output if requested
     if debug {
         thornfiddle::debug_thornfiddle_values(
-            &lmc_features,
+            &lmc_features_with_harmonic,
             &filename,
             &PathBuf::from(&config.output_base_dir),
             spectral_entropy,
@@ -238,8 +287,29 @@ pub fn process_image(
             config.thornfiddle_smoothing_strength,
         )?;
         
+        println!("Golden Pixel Thornfiddle analysis for {}:", filename);
+        println!("  LEC circumference: {:.1} pixels", lec_circumference);
+        println!("  LMC circumference: {:.1} pixels", lmc_circumference);
+        println!("  Thornfiddle opening size: {:.1}% of image width", config.thornfiddle_opening_size_percentage);
+        println!("  Golden pixel threshold: {} pixels", config.thornfiddle_pixel_threshold);
+        
+        // Show harmonic enhancement statistics
+        if !lec_harmonic_values.is_empty() {
+            let lec_min = lec_harmonic_values.iter().cloned().fold(f64::INFINITY, f64::min);
+            let lec_max = lec_harmonic_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let lec_mean = lec_harmonic_values.iter().sum::<f64>() / lec_harmonic_values.len() as f64;
+            println!("  LEC harmonic - min: {:.6}, max: {:.6}, mean: {:.6}", lec_min, lec_max, lec_mean);
+        }
+        
+        if !lmc_harmonic_values.is_empty() {
+            let lmc_min = lmc_harmonic_values.iter().cloned().fold(f64::INFINITY, f64::min);
+            let lmc_max = lmc_harmonic_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let lmc_mean = lmc_harmonic_values.iter().sum::<f64>() / lmc_harmonic_values.len() as f64;
+            println!("  LMC harmonic - min: {:.6}, max: {:.6}, mean: {:.6}", lmc_min, lmc_max, lmc_mean);
+        }
+        
         println!("Analysis completed for {}:", filename);
-        println!("  Spectral Entropy: {:.6}", spectral_entropy);
+        println!("  Spectral Entropy (Golden Harmonic): {:.6}", spectral_entropy);
         println!("  Spectral Entropy Pink: {:.6}", spectral_entropy_pink);
         println!("  Spectral Entropy Contour: {:.6}", spectral_entropy_contour);
         println!("  Approximate Entropy: {:.6}", approximate_entropy);
@@ -249,8 +319,8 @@ pub fn process_image(
         println!("  Area: {} pixels", area);
         println!("  Biological Dimensions: {:.1} x {:.1} pixels", length, width);
         println!("  Outline Count: {} points", outline_count);
-        println!("  LEC features: {}", lec_features.len());
-        println!("  LMC features: {}", lmc_features.len());
+        println!("  LEC features: {}", lec_features_with_harmonic.len());
+        println!("  LMC features: {}", lmc_features_with_harmonic.len());
         println!("  Reference points - LEC: {:?}, LMC: {:?}", lec_reference_point, lmc_reference_point);
     }
     

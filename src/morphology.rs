@@ -253,6 +253,48 @@ pub fn mark_opened_regions(
     marked
 }
 
+/// NEW: Create Thornfiddle Image with golden lobe regions
+/// Takes LMC image as base, applies aggressive opening, marks removed regions as golden
+pub fn create_thornfiddle_image(
+    lmc_image: &RgbaImage,
+    opening_size_percentage: f64,
+    golden_color: [u8; 3],
+) -> Result<RgbaImage> {
+    let (width, height) = lmc_image.dimensions();
+    
+    // Calculate aggressive opening size: image_width * percentage / 100
+    let aggressive_size = ((width as f64 * opening_size_percentage / 100.0).round() as u32).max(1);
+    
+    println!("Creating Thornfiddle image with aggressive opening size: {} ({}% of {})", 
+             aggressive_size, opening_size_percentage, width);
+    
+    // Apply aggressive opening to LMC image
+    let aggressively_opened = apply_opening(lmc_image, aggressive_size)?;
+    
+    // Create Thornfiddle image: LMC base + golden overlays for removed regions
+    let mut thornfiddle_image = lmc_image.clone();
+    
+    // Mark pixels that were non-transparent in LMC but transparent after aggressive opening
+    let mut golden_pixel_count = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let lmc_pixel = lmc_image.get_pixel(x, y);
+            let opened_pixel = aggressively_opened.get_pixel(x, y);
+            
+            // If pixel was originally non-transparent in LMC but is transparent after aggressive opening
+            if lmc_pixel[3] > 0 && opened_pixel[3] == 0 {
+                // Mark it with golden color (lobe region)
+                thornfiddle_image.put_pixel(x, y, Rgba([golden_color[0], golden_color[1], golden_color[2], lmc_pixel[3]]));
+                golden_pixel_count += 1;
+            }
+        }
+    }
+    
+    println!("Thornfiddle image created with {} golden lobe pixels", golden_pixel_count);
+    
+    Ok(thornfiddle_image)
+}
+
 /// Find all connected components in an image
 /// Returns a vector of component sizes and a map of pixel coordinates to component IDs
 fn find_connected_components(image: &RgbaImage, pink_color: [u8; 3]) -> (Vec<usize>, HashMap<(u32, u32), u32>) {
