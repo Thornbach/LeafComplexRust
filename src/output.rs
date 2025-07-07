@@ -144,3 +144,101 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     
     Ok(())
 }
+
+pub fn create_thornfiddle_summary<P: AsRef<Path>>(
+    output_dir: P,
+    filename: &str,
+    subfolder: &str,
+    spectral_entropy: f64,
+    spectral_entropy_pink: f64,
+    spectral_entropy_contour: f64,
+    approximate_entropy: f64,
+    edge_complexity: f64,
+    lec_circularity: f64,
+    lmc_circularity: f64,
+    area: u32,
+    lec_length: f64,          // LEC biological length
+    lec_width: f64,           // LEC biological width
+    lec_shape_index: f64,     // NEW: LEC Shape Index
+    lmc_length: f64,          // NEW: LMC biological length
+    lmc_width: f64,           // NEW: LMC biological width  
+    lmc_shape_index: f64,     // NEW: LMC Shape Index
+    dynamic_opening_percentage: f64, // NEW: Dynamic opening percentage used
+    outline_count: u32,       // outline point count
+    harmonic_chain_count: usize, // number of valid harmonic chains
+) -> Result<()> {
+    // Create Thornfiddle directory if it doesn't exist
+    let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
+    fs::create_dir_all(&thornfiddle_dir).map_err(|e| LeafComplexError::Io(e))?;
+    
+    // Path to summary CSV
+    let summary_path = thornfiddle_dir.join("summary.csv");
+    
+    // Check if summary file already exists
+    let file_exists = summary_path.exists();
+    
+    // Open file in append mode if it exists, otherwise create new
+    let mut writer = if file_exists {
+        Writer::from_writer(fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&summary_path)
+            .map_err(|e| LeafComplexError::Io(e))?)
+    } else {
+        let mut writer = Writer::from_path(&summary_path)
+            .map_err(|e| LeafComplexError::CsvOutput(e))?;
+        
+        // Write header only for new file - UPDATED with shape index fields
+        writer.write_record(&[
+            "ID",
+            "Subfolder",
+            "Spectral_Entropy",
+            "Spectral_Entropy_Pink",
+            "Spectral_Entropy_Contour",
+            "Approximate_Entropy",
+            "Edge_Complexity",
+            "LEC_Circularity",
+            "LMC_Circularity",
+            "Area",
+            "LEC_Length",          // LEC biological length
+            "LEC_Width",           // LEC biological width
+            "LEC_ShapeIndex",      // NEW: LEC Shape Index
+            "LMC_Length",          // NEW: LMC biological length
+            "LMC_Width",           // NEW: LMC biological width
+            "LMC_ShapeIndex",      // NEW: LMC Shape Index
+            "Dynamic_Opening_Percentage", // NEW: Dynamic opening percentage
+            "Outline_Count",
+            "Harmonic_Chain_Count", // number of valid harmonic chains
+        ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+        
+        writer
+    };
+    
+    // Write data - UPDATED with shape index fields
+    writer.write_record(&[
+        filename,
+        subfolder,
+        &format!("{:.6}", spectral_entropy),
+        &format!("{:.6}", spectral_entropy_pink),
+        &format!("{:.6}", spectral_entropy_contour),
+        &format!("{:.6}", approximate_entropy),
+        &format!("{:.6}", edge_complexity),
+        &format!("{:.6}", lec_circularity),
+        &format!("{:.6}", lmc_circularity),
+        &area.to_string(),
+        &format!("{:.1}", lec_length),    // LEC biological length
+        &format!("{:.1}", lec_width),     // LEC biological width
+        &format!("{:.3}", lec_shape_index), // NEW: LEC Shape Index
+        &format!("{:.1}", lmc_length),    // NEW: LMC biological length
+        &format!("{:.1}", lmc_width),     // NEW: LMC biological width
+        &format!("{:.3}", lmc_shape_index), // NEW: LMC Shape Index
+        &format!("{:.1}", dynamic_opening_percentage), // NEW: Dynamic opening percentage
+        &outline_count.to_string(),
+        &harmonic_chain_count.to_string(), // harmonic chain count
+    ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
+    
+    // Flush writer
+    writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
+    
+    Ok(())
+}

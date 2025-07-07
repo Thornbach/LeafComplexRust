@@ -1,7 +1,6 @@
 // src/gui/state.rs - GUI state management and data structures
 
 use std::time::Instant;
-use std::collections::HashSet;
 use image::RgbaImage;
 use minifb::Key;
 

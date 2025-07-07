@@ -1,3 +1,36 @@
+
+use std::path::Path;
+use std::fs;
+use std::collections::HashSet;
+use rustfft::{FftPlanner, num_complex::Complex};
+use csv::Writer;
+use std::f64::consts::PI;
+use image::RgbaImage;
+
+use crate::errors::{LeafComplexError, Result};
+use crate::feature_extraction::MarginalPointFeatures;
+use crate::image_utils::has_rgb_color;
+use crate::path_algorithms::trace_straight_line;
+
+/// Represents a chain of consecutive golden pixel crossings (lobes)
+#[derive(Debug, Clone)]
+struct GoldenChain {
+    start_index: usize,
+    end_index: usize,
+    length: usize,
+    total_golden_pixels: u32,
+    max_crossing_count: u32,
+}
+
+/// Result structure containing harmonic values and chain statistics
+#[derive(Debug)]
+pub struct HarmonicResult {
+    pub harmonic_values: Vec<f64>,
+    pub valid_chain_count: usize,
+    pub total_chain_count: usize,
+}
+
+
 /// Extract contour signature using absolute distance deviations from mean radius
 fn extract_contour_signature(contour: &[(u32, u32)], interpolation_points: usize) -> Vec<f64> {
     use crate::morphology::resample_contour;
@@ -706,10 +739,16 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     lec_circularity: f64,
     lmc_circularity: f64,
     area: u32,
-    length: f64,          // biological length (longest distance between contour points)
-    width: f64,           // biological width (perpendicular to length axis)
-    outline_count: u32,   // outline point count
-    harmonic_chain_count: usize, // NEW: number of valid harmonic chains
+    lec_length: f64,
+    lec_width: f64,
+    lec_shape_index: f64,
+    lmc_length: f64,
+    lmc_width: f64,
+    lmc_shape_index: f64,
+    dynamic_opening_percentage: f64,
+    dynamic_kernel_size: u32,
+    outline_count: u32,
+    harmonic_chain_count: usize,
 ) -> Result<()> {
     // Create Thornfiddle directory if it doesn't exist
     let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
@@ -732,7 +771,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header only for new file - UPDATED with harmonic chain count
+        // Write header only for new file
         writer.write_record(&[
             "ID",
             "Subfolder",
@@ -744,16 +783,22 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
             "LEC_Circularity",
             "LMC_Circularity",
             "Area",
-            "Length",          // biological length
-            "Width",           // biological width
+            "LEC_Length",
+            "LEC_Width",
+            "LEC_ShapeIndex",
+            "LMC_Length",
+            "LMC_Width",
+            "LMC_ShapeIndex",
+            "Dynamic_Opening_Percentage",
+            "Dynamic_Kernel_Size",
             "Outline_Count",
-            "Harmonic_Chain_Count", // NEW: number of valid harmonic chains
+            "Harmonic_Chain_Count",
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
         
         writer
     };
     
-    // Write data - UPDATED with harmonic chain count
+    // Write data
     writer.write_record(&[
         filename,
         subfolder,
@@ -765,49 +810,23 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         &format!("{:.6}", lec_circularity),
         &format!("{:.6}", lmc_circularity),
         &area.to_string(),
-        &format!("{:.1}", length),    // biological length
-        &format!("{:.1}", width),     // biological width  
+        &format!("{:.1}", lec_length),
+        &format!("{:.1}", lec_width),
+        &format!("{:.3}", lec_shape_index),
+        &format!("{:.1}", lmc_length),
+        &format!("{:.1}", lmc_width),
+        &format!("{:.3}", lmc_shape_index),
+        &format!("{:.1}", dynamic_opening_percentage),
+        &dynamic_kernel_size.to_string(),
         &outline_count.to_string(),
-        &harmonic_chain_count.to_string(), // NEW: harmonic chain count
+        &harmonic_chain_count.to_string(),
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Flush writer
     writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
     
     Ok(())
-}// src/thornfiddle.rs - Updated with enhanced harmonic control and chain counting
-
-use std::path::Path;
-use std::fs;
-use std::collections::HashSet;
-use rustfft::{FftPlanner, num_complex::Complex};
-use csv::Writer;
-use std::f64::consts::PI;
-use image::RgbaImage;
-
-use crate::errors::{LeafComplexError, Result};
-use crate::feature_extraction::MarginalPointFeatures;
-use crate::image_utils::has_rgb_color;
-use crate::path_algorithms::trace_straight_line;
-
-/// Represents a chain of consecutive golden pixel crossings (lobes)
-#[derive(Debug, Clone)]
-struct GoldenChain {
-    start_index: usize,
-    end_index: usize,
-    length: usize,
-    total_golden_pixels: u32,
-    max_crossing_count: u32,
 }
-
-/// Result structure containing harmonic values and chain statistics
-#[derive(Debug)]
-pub struct HarmonicResult {
-    pub harmonic_values: Vec<f64>,
-    pub valid_chain_count: usize,
-    pub total_chain_count: usize,
-}
-
 /// Calculate a simple Thornfiddle Multiplier based on path complexity
 pub fn calculate_thornfiddle_multiplier(feature: &MarginalPointFeatures) -> f64 {
     if feature.straight_path_length <= 0.0 || feature.diego_path_length <= 0.0 {

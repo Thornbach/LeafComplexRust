@@ -85,7 +85,7 @@ pub fn create_circular_kernel(diameter: u32) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
         for x_idx in 0..diameter {
             let dx = x_idx as f32 - center;
             let dy = y_idx as f32 - center;
-            let mut dist_sq = dx * dx + dy * dy;
+            let dist_sq = dx * dx + dy * dy;
 
             if diameter % 2 == 0 && diameter > 0 {
                 // For even diameters, to ensure a (e.g.) 2x2 kernel for D=2,

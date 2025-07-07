@@ -1,7 +1,6 @@
 use image::{ImageBuffer, Rgba, RgbaImage};
 use std::cmp::{max, min};
 use std::collections::{HashMap, VecDeque};
-use rayon::prelude::*;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::image_utils::{create_circular_kernel, in_bounds, has_rgb_color, ALPHA_THRESHOLD};
@@ -257,16 +256,16 @@ pub fn mark_opened_regions(
 /// Takes LMC image as base, applies aggressive opening, marks removed regions as golden
 pub fn create_thornfiddle_image(
     lmc_image: &RgbaImage,
-    opening_size_percentage: f64,
+    dynamic_kernel_size: u32,
     golden_color: [u8; 3],
 ) -> Result<RgbaImage> {
     let (width, height) = lmc_image.dimensions();
     
-    // Calculate aggressive opening size: image_width * percentage / 100
-    let aggressive_size = ((width as f64 * opening_size_percentage / 100.0).round() as u32).max(1);
+    // Ensure minimum kernel size of 1
+    let aggressive_size = dynamic_kernel_size.max(1);
     
-    println!("Creating Thornfiddle image with aggressive opening size: {} ({}% of {})", 
-             aggressive_size, opening_size_percentage, width);
+    println!("Creating Thornfiddle image with DYNAMIC kernel size: {} pixels (based on LMC SHORTER dimension)", 
+             aggressive_size);
     
     // Apply aggressive opening to LMC image
     let aggressively_opened = apply_opening(lmc_image, aggressive_size)?;
@@ -290,7 +289,7 @@ pub fn create_thornfiddle_image(
         }
     }
     
-    println!("Thornfiddle image created with {} golden lobe pixels", golden_pixel_count);
+    println!("Thornfiddle image created with {} golden lobe pixels using dynamic kernel size", golden_pixel_count);
     
     Ok(thornfiddle_image)
 }
@@ -505,7 +504,7 @@ fn clean_thin_artifacts(image: &RgbaImage, pink_color: [u8; 3]) -> RgbaImage {
     let largest_only = keep_largest_component(&eroded, &component_sizes, &component_map);
     
     // Step 4: Apply a small dilation to restore size (1-pixel radius)
-    let restore_kernel = create_circular_kernel(3); // Same size to restore
+    let _restore_kernel = create_circular_kernel(3);
     let mut dilated = RgbaImage::new(width, height);
     
     for y in 0..height {

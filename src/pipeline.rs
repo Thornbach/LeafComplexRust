@@ -1,4 +1,4 @@
-// src/pipeline.rs - Updated with enhanced Golden Pixel Thornfiddle implementation
+// src/pipeline.rs - Updated with dynamic thornfiddle opening based on LMC Shape Index
 
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ use crate::image_utils::resize_image;
 use crate::morphology::{apply_opening, mark_opened_regions, trace_contour, create_lmc_with_com_component, create_thornfiddle_image};
 use crate::output::{write_lec_csv, write_lmc_csv};
 use crate::point_analysis::{get_reference_point, get_lmc_reference_point};
-use crate::shape_analysis::analyze_shape_comprehensive;
+use crate::shape_analysis::{analyze_shape_comprehensive, calculate_length_width_shape_index, calculate_length_width_shape_index_with_shorter, calculate_dynamic_opening_percentage};
 use crate::thornfiddle::{self, calculate_leaf_circumference};
 
 /// Process a single image
@@ -49,28 +49,74 @@ pub fn process_image(
         config.marked_region_color_rgb
     );
     
-    // Step 3: Create Thornfiddle Image with golden lobe regions
+    // STEP 2.5: Calculate LEC Shape Index (Length, Width, Shape Index)
+    println!("Calculating LEC shape metrics...");
+    let (lec_length, lec_width, lec_shape_index) = calculate_length_width_shape_index(
+        &processed_image, 
+        config.marked_region_color_rgb
+    );
+    
+    if debug {
+        println!("LEC Shape Analysis for {}:", filename);
+        println!("  LEC Length: {:.1} pixels", lec_length);
+        println!("  LEC Width: {:.1} pixels", lec_width);
+        println!("  LEC Shape Index: {:.3}", lec_shape_index);
+    }
+    
+    // STEP 2.6: Calculate LMC Shape Index (Length, Width, Shape Index, Shorter Dimension)
+    println!("Calculating LMC shape metrics...");
+    let (lmc_length, lmc_width, lmc_shape_index, lmc_shorter_dimension) = calculate_length_width_shape_index_with_shorter(
+        &lmc_image, 
+        config.marked_region_color_rgb
+    );
+    
+    if debug {
+        println!("LMC Shape Analysis for {}:", filename);
+        println!("  LMC Length: {:.1} pixels", lmc_length);
+        println!("  LMC Width: {:.1} pixels", lmc_width);
+        println!("  LMC Shape Index: {:.3}", lmc_shape_index);
+        println!("  LMC Shorter Dimension: {:.1} pixels", lmc_shorter_dimension);
+    }
+    
+    // STEP 2.7: Calculate Dynamic Opening Percentage based on LMC Shape Index
+    let dynamic_opening_percentage = calculate_dynamic_opening_percentage(
+        lmc_shape_index,
+        config.thornfiddle_max_opening_percentage,
+        config.thornfiddle_min_opening_percentage,
+    );
+    
+    // STEP 2.8: Calculate Dynamic Kernel Size from LMC SHORTER Dimension (CRITICAL FIX!)
+    let dynamic_kernel_size = ((dynamic_opening_percentage / 100.0) * lmc_shorter_dimension).round() as u32;
+    let dynamic_kernel_size = dynamic_kernel_size.max(1); // Ensure minimum of 1 pixel
+    
+    println!("Dynamic opening calculation: LMC Shape Index {:.3} -> {:.1}% -> {} pixel kernel (of {:.1} pixel SHORTER dimension)", 
+             lmc_shape_index, dynamic_opening_percentage, dynamic_kernel_size, lmc_shorter_dimension);
+    
+    // Step 3: Create Thornfiddle Image with DYNAMIC golden lobe regions
     let thornfiddle_image = create_thornfiddle_image(
         &lmc_image,
-        config.thornfiddle_opening_size_percentage,
+        dynamic_kernel_size, // Use dynamic kernel size based on LMC SHORTER dimension
         config.thornfiddle_marked_color_rgb,
     )?;
     
     // Calculate comprehensive shape metrics including biological dimensions
-    // For the original image: get area, circularity, length, width, and outline count
-    let (area, lec_circularity, length, width, outline_count) = 
+    // For the original image: get area, circularity, length, width, outline count, and shape index
+    let (area, lec_circularity, _orig_length, _orig_width, outline_count, _orig_shape_index) = 
         analyze_shape_comprehensive(&processed_image, config.marked_region_color_rgb);
     
-    // For the LMC image: just get circularity (we already have the other measurements from original)
+    // For the LMC image: just get circularity (we already calculated length/width/shape_index above)
     let (_, lmc_circularity) = crate::shape_analysis::analyze_shape(&lmc_image, config.marked_region_color_rgb);
     
     if debug {
         println!("Shape analysis for {}:", filename);
         println!("  Area: {} pixels", area);
-        println!("  Biological dimensions: {:.1} x {:.1} pixels", length, width);
+        println!("  Biological dimensions (LEC): {:.1} x {:.1} pixels", lec_length, lec_width);
+        println!("  Biological dimensions (LMC): {:.1} x {:.1} pixels", lmc_length, lmc_width);
         println!("  Outline count: {} points", outline_count);
         println!("  LEC Circularity: {:.6}", lec_circularity);
         println!("  LMC Circularity: {:.6}", lmc_circularity);
+        println!("  Dynamic Opening: {:.1}% -> {} pixel kernel (of {:.1} pixel LMC SHORTER dimension)", 
+                 dynamic_opening_percentage, dynamic_kernel_size, lmc_shorter_dimension);
     }
     
     // Save debug images if requested
@@ -264,7 +310,7 @@ pub fn process_image(
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features_with_harmonic, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
-    // UPDATED: Step 9: Create Thornfiddle summary with harmonic chain count
+    // UPDATED: Step 9: Create Thornfiddle summary with NEW shape index fields and dynamic kernel size
     // Use LMC harmonic chain count for the summary (as it's used for the main spectral entropy calculation)
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
@@ -278,10 +324,16 @@ pub fn process_image(
         lec_circularity,
         lmc_circularity,
         area,
-        length,         // biological length (longest distance between contour points)
-        width,          // biological width (perpendicular to length axis)
-        outline_count,  // outline point count
-        lmc_harmonic_result.valid_chain_count, // NEW: harmonic chain count from LMC analysis
+        lec_length,         // LEC biological length
+        lec_width,          // LEC biological width
+        lec_shape_index,    // LEC Shape Index
+        lmc_length,         // LMC biological length  
+        lmc_width,          // LMC biological width
+        lmc_shape_index,    // LMC Shape Index
+        dynamic_opening_percentage, // Dynamic opening percentage used
+        dynamic_kernel_size, // NEW: Dynamic kernel size used (in pixels)
+        outline_count,      // outline point count
+        lmc_harmonic_result.valid_chain_count, // harmonic chain count from LMC analysis
     )?;
     
     Ok(())

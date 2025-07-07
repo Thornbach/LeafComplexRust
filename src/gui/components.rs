@@ -1,7 +1,6 @@
 // src/gui/components.rs - UI component drawing
 
 use super::font::FONT_BITMAP; // Updated path
-use super::state::{WINDOW_WIDTH, WINDOW_HEIGHT};
 
 /// Draw a circle
 pub fn draw_circle(buffer: &mut [u32], center_x: usize, center_y: usize, radius: usize, 

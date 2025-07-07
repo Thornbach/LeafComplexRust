@@ -63,7 +63,14 @@ pub struct Config {
     #[serde(default = "default_lec_scaling_factor")]
     pub lec_scaling_factor: f64,
     
-    // Thornfiddle Lobe Detection Parameters
+    // UPDATED: Dynamic Thornfiddle Lobe Detection Parameters
+    #[serde(default = "default_thornfiddle_max_opening_percentage")]
+    pub thornfiddle_max_opening_percentage: f64,
+    
+    #[serde(default = "default_thornfiddle_min_opening_percentage")]
+    pub thornfiddle_min_opening_percentage: f64,
+    
+    // DEPRECATED: Keep for backward compatibility but not used
     #[serde(default = "default_thornfiddle_opening_size_percentage")]
     pub thornfiddle_opening_size_percentage: f64,
     
@@ -140,9 +147,18 @@ fn default_lec_scaling_factor() -> f64 {
     3.0 // Default scaling factor for edge complexity
 }
 
-// Thornfiddle default functions
+// UPDATED: Dynamic Thornfiddle default functions
+fn default_thornfiddle_max_opening_percentage() -> f64 {
+    30.0 // Maximum opening percentage for circular leaves (shape_index = 1.0)
+}
+
+fn default_thornfiddle_min_opening_percentage() -> f64 {
+    10.0 // Minimum opening percentage for very elongated leaves
+}
+
+// DEPRECATED: Legacy parameter for backward compatibility
 fn default_thornfiddle_opening_size_percentage() -> f64 {
-    10.0 // 10% of image width for aggressive opening
+    20.0 // Legacy default - not used in dynamic calculation
 }
 
 fn default_thornfiddle_pixel_threshold() -> u32 {
@@ -202,7 +218,9 @@ impl Config {
             approximate_entropy_m: 2,
             approximate_entropy_r: 0.2,
             lec_scaling_factor: 3.0,
-            thornfiddle_opening_size_percentage: 10.0,
+            thornfiddle_max_opening_percentage: 30.0,
+            thornfiddle_min_opening_percentage: 10.0,
+            thornfiddle_opening_size_percentage: 20.0, // Legacy - not used
             thornfiddle_pixel_threshold: 3,
             thornfiddle_marked_color_rgb: [255, 215, 0],
             harmonic_strength_multiplier: 1.0,
@@ -252,10 +270,16 @@ impl Config {
             ));
         }
         
-        // Validate thornfiddle parameters
-        if self.thornfiddle_opening_size_percentage <= 0.0 || self.thornfiddle_opening_size_percentage > 50.0 {
+        // UPDATED: Validate dynamic thornfiddle parameters
+        if self.thornfiddle_max_opening_percentage <= 0.0 || self.thornfiddle_max_opening_percentage > 50.0 {
             return Err(LeafComplexError::Config(
-                "thornfiddle_opening_size_percentage must be between 0.0 and 50.0".to_string(),
+                "thornfiddle_max_opening_percentage must be between 0.0 and 50.0".to_string(),
+            ));
+        }
+        
+        if self.thornfiddle_min_opening_percentage <= 0.0 || self.thornfiddle_min_opening_percentage >= self.thornfiddle_max_opening_percentage {
+            return Err(LeafComplexError::Config(
+                "thornfiddle_min_opening_percentage must be > 0.0 and < thornfiddle_max_opening_percentage".to_string(),
             ));
         }
         

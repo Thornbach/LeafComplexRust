@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
+use std::collections;
 use image::RgbaImage;
 use bresenham::Bresenham;
-use crate::image_utils::{is_non_transparent, has_rgb_color};
+use crate::image_utils;
 
 /// Constant for the golden ratio
 pub const PHI: f64 = 1.618033988749895; // (1.0 + 5.0_f64.sqrt()) / 2.0
