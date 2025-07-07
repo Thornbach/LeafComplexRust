@@ -63,7 +63,7 @@ pub struct Config {
     #[serde(default = "default_lec_scaling_factor")]
     pub lec_scaling_factor: f64,
     
-    // NEW: Thornfiddle Lobe Detection Parameters
+    // Thornfiddle Lobe Detection Parameters
     #[serde(default = "default_thornfiddle_opening_size_percentage")]
     pub thornfiddle_opening_size_percentage: f64,
     
@@ -72,6 +72,13 @@ pub struct Config {
     
     #[serde(default = "default_thornfiddle_marked_color_rgb")]
     pub thornfiddle_marked_color_rgb: [u8; 3],
+    
+    // NEW: Harmonic Enhancement Control Parameters
+    #[serde(default = "default_harmonic_strength_multiplier")]
+    pub harmonic_strength_multiplier: f64,
+    
+    #[serde(default = "default_harmonic_min_chain_length")]
+    pub harmonic_min_chain_length: usize,
 }
 
 /// Reference point choice enum
@@ -133,7 +140,7 @@ fn default_lec_scaling_factor() -> f64 {
     3.0 // Default scaling factor for edge complexity
 }
 
-// NEW: Thornfiddle default functions
+// Thornfiddle default functions
 fn default_thornfiddle_opening_size_percentage() -> f64 {
     10.0 // 10% of image width for aggressive opening
 }
@@ -144,6 +151,15 @@ fn default_thornfiddle_pixel_threshold() -> u32 {
 
 fn default_thornfiddle_marked_color_rgb() -> [u8; 3] {
     [255, 215, 0] // Golden yellow for lobe regions
+}
+
+// NEW: Harmonic default functions
+fn default_harmonic_strength_multiplier() -> f64 {
+    1.0 // Default harmonic strength (1.0 = normal, 2.0 = double strength, etc.)
+}
+
+fn default_harmonic_min_chain_length() -> usize {
+    10 // Minimum chain length to be counted as a harmonic chain
 }
 
 impl Config {
@@ -189,6 +205,8 @@ impl Config {
             thornfiddle_opening_size_percentage: 10.0,
             thornfiddle_pixel_threshold: 3,
             thornfiddle_marked_color_rgb: [255, 215, 0],
+            harmonic_strength_multiplier: 1.0,
+            harmonic_min_chain_length: 10,
         }
     }
 
@@ -234,7 +252,7 @@ impl Config {
             ));
         }
         
-        // NEW: Validate thornfiddle parameters
+        // Validate thornfiddle parameters
         if self.thornfiddle_opening_size_percentage <= 0.0 || self.thornfiddle_opening_size_percentage > 50.0 {
             return Err(LeafComplexError::Config(
                 "thornfiddle_opening_size_percentage must be between 0.0 and 50.0".to_string(),
@@ -244,6 +262,19 @@ impl Config {
         if self.thornfiddle_pixel_threshold == 0 {
             return Err(LeafComplexError::Config(
                 "thornfiddle_pixel_threshold must be > 0".to_string(),
+            ));
+        }
+        
+        // NEW: Validate harmonic parameters
+        if self.harmonic_strength_multiplier <= 0.0 {
+            return Err(LeafComplexError::Config(
+                "harmonic_strength_multiplier must be > 0.0".to_string(),
+            ));
+        }
+        
+        if self.harmonic_min_chain_length == 0 {
+            return Err(LeafComplexError::Config(
+                "harmonic_min_chain_length must be > 0".to_string(),
             ));
         }
 

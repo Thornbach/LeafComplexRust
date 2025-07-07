@@ -1,4 +1,4 @@
-// src/lib.rs - Updated to include golden pixel thornfiddle functions
+// src/lib.rs - Updated to include enhanced golden pixel thornfiddle functions
 
 pub mod config;
 pub mod errors;
@@ -34,25 +34,28 @@ pub use shape_analysis::{
     calculate_circularity,
 };
 
-// Re-export other useful analysis functions including NEW golden pixel functions
+// Re-export analysis functions including UPDATED golden pixel functions
 pub use thornfiddle::{
     calculate_spectral_entropy_from_contour,
     calculate_spectral_entropy_from_pink_path,
     calculate_approximate_entropy_from_pink_path,
     calculate_edge_feature_density,
-    // NEW: Golden Pixel Harmonic Thornfiddle functions
-    calculate_thornfiddle_path_harmonic,
+    // Enhanced Golden Pixel Harmonic Thornfiddle functions
+    calculate_thornfiddle_path_harmonic,           // Main harmonic function
     calculate_leaf_circumference,
     extract_harmonic_thornfiddle_path_signal,
     calculate_spectral_entropy_from_harmonic_thornfiddle_path,
+    create_thornfiddle_summary,                    // Summary generation
+    // NEW: HarmonicResult struct for comprehensive harmonic analysis
+    HarmonicResult,
 };
 
-// Re-export morphology functions including NEW Thornfiddle image creation
+// Re-export morphology functions including Thornfiddle image creation
 pub use morphology::{
     trace_contour,
     apply_opening,
     calculate_center_of_mass,
-    // NEW: Golden lobe detection
+    // Golden lobe detection
     create_thornfiddle_image,
 };
 

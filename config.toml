@@ -6,7 +6,7 @@ output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will
 resize_dimensions = [512, 512]  # Optional [width, height] for batch processing
 gui_resize_dimensions = [1024, 1024]  # Optional [width, height] for GUI mode - speeds up analysis
 
-opening_kernel_size = 43 # Diameter/radius for the circular opening algorithm's structuring element
+opening_kernel_size = 17 # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
 
 # Analysis Parameters
@@ -39,7 +39,11 @@ approximate_entropy_r = 0.2  # Tolerance for ApEn calculation (typical: 0.1-0.3 
 # LEC Analysis Parameters
 lec_scaling_factor = 3.0  # Scaling factor for edge complexity calculation
 
-# NEW: Golden Pixel Lobe Detection Parameters
-thornfiddle_opening_size_percentage = 15.0  # Aggressive opening size as % of image width (10% = 51.2 pixels for 512px image)
+# Golden Pixel Lobe Detection Parameters
+thornfiddle_opening_size_percentage = 20  # Aggressive opening size as % of image width (10% = 51.2 pixels for 512px image)
 thornfiddle_pixel_threshold = 10  # Minimum golden pixels crossed to trigger harmonic chain
 thornfiddle_marked_color_rgb = [255, 215, 0]  # Golden yellow for lobe regions
+
+# NEW: Harmonic Enhancement Control Parameters
+harmonic_strength_multiplier = 2.0 # Global harmonic strength multiplier (1.0 = normal, 2.0 = double strength, 0.5 = half strength)
+harmonic_min_chain_length = 10  # Minimum chain length (in contour points) to count as a valid harmonic chain for summary statistics
