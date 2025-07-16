@@ -1,4 +1,4 @@
-// Updated src/output.rs - Added Thornfiddle_Path_Harmonic column
+// Enhanced src/output.rs - Updated with new weighted chain metrics
 
 use std::fs;
 use std::path::Path;
@@ -63,7 +63,7 @@ pub fn write_lec_csv<P: AsRef<Path>>(
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
     
-    // Flush writer - Fixed: convert io::Error to csv::Error using into()
+    // Flush writer
     writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
     
     Ok(())
@@ -145,6 +145,7 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     Ok(())
 }
 
+/// ENHANCED: Create Thornfiddle summary CSV with new weighted chain metrics
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
@@ -157,15 +158,18 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     lec_circularity: f64,
     lmc_circularity: f64,
     area: u32,
-    lec_length: f64,          // LEC biological length
-    lec_width: f64,           // LEC biological width
-    lec_shape_index: f64,     // NEW: LEC Shape Index
-    lmc_length: f64,          // NEW: LMC biological length
-    lmc_width: f64,           // NEW: LMC biological width  
-    lmc_shape_index: f64,     // NEW: LMC Shape Index
-    dynamic_opening_percentage: f64, // NEW: Dynamic opening percentage used
-    outline_count: u32,       // outline point count
-    harmonic_chain_count: usize, // number of valid harmonic chains
+    lec_length: f64,
+    lec_width: f64,
+    lec_shape_index: f64,
+    lmc_length: f64,
+    lmc_width: f64,
+    lmc_shape_index: f64,
+    dynamic_opening_percentage: f64,
+    dynamic_kernel_size: u32,
+    outline_count: u32,
+    harmonic_chain_count: usize,
+    weighted_chain_score: f64,     // NEW: Chain intensity weighting
+    rhythm_regularity: f64,        // NEW: Rhythm regularity factor
 ) -> Result<()> {
     // Create Thornfiddle directory if it doesn't exist
     let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
@@ -188,7 +192,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header only for new file - UPDATED with shape index fields
+        // ENHANCED: Write header with new weighted chain metrics
         writer.write_record(&[
             "ID",
             "Subfolder",
@@ -200,21 +204,24 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
             "LEC_Circularity",
             "LMC_Circularity",
             "Area",
-            "LEC_Length",          // LEC biological length
-            "LEC_Width",           // LEC biological width
-            "LEC_ShapeIndex",      // NEW: LEC Shape Index
-            "LMC_Length",          // NEW: LMC biological length
-            "LMC_Width",           // NEW: LMC biological width
-            "LMC_ShapeIndex",      // NEW: LMC Shape Index
-            "Dynamic_Opening_Percentage", // NEW: Dynamic opening percentage
+            "LEC_Length",
+            "LEC_Width",
+            "LEC_ShapeIndex",
+            "LMC_Length",
+            "LMC_Width",
+            "LMC_ShapeIndex",
+            "Dynamic_Opening_Percentage",
+            "Dynamic_Kernel_Size",
             "Outline_Count",
-            "Harmonic_Chain_Count", // number of valid harmonic chains
+            "Harmonic_Chain_Count",
+            "Weighted_Chain_Score",    // NEW: Chain intensity scoring
+            "Rhythm_Regularity",       // NEW: Rhythm regularity factor
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
         
         writer
     };
     
-    // Write data - UPDATED with shape index fields
+    // ENHANCED: Write data with new weighted chain metrics
     writer.write_record(&[
         filename,
         subfolder,
@@ -226,15 +233,18 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         &format!("{:.6}", lec_circularity),
         &format!("{:.6}", lmc_circularity),
         &area.to_string(),
-        &format!("{:.1}", lec_length),    // LEC biological length
-        &format!("{:.1}", lec_width),     // LEC biological width
-        &format!("{:.3}", lec_shape_index), // NEW: LEC Shape Index
-        &format!("{:.1}", lmc_length),    // NEW: LMC biological length
-        &format!("{:.1}", lmc_width),     // NEW: LMC biological width
-        &format!("{:.3}", lmc_shape_index), // NEW: LMC Shape Index
-        &format!("{:.1}", dynamic_opening_percentage), // NEW: Dynamic opening percentage
+        &format!("{:.1}", lec_length),
+        &format!("{:.1}", lec_width),
+        &format!("{:.3}", lec_shape_index),
+        &format!("{:.1}", lmc_length),
+        &format!("{:.1}", lmc_width),
+        &format!("{:.3}", lmc_shape_index),
+        &format!("{:.1}", dynamic_opening_percentage),
+        &dynamic_kernel_size.to_string(),
         &outline_count.to_string(),
-        &harmonic_chain_count.to_string(), // harmonic chain count
+        &harmonic_chain_count.to_string(),
+        &format!("{:.2}", weighted_chain_score),    // NEW: 2 decimal places for chain intensity
+        &format!("{:.3}", rhythm_regularity),       // NEW: 3 decimal places for regularity
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Flush writer

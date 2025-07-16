@@ -1,4 +1,4 @@
-// Updated Config struct in src/config.rs
+// Updated Config struct in src/config.rs with adaptive opening parameters
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -27,6 +27,16 @@ pub struct Config {
     pub golden_spiral_phi_exponent_factor: f64,
     #[serde(default = "default_parallel")]
     pub use_parallel: bool,
+    
+    // NEW: Adaptive Opening Parameters
+    #[serde(default = "default_adaptive_opening_max_density")]
+    pub adaptive_opening_max_density: f64,
+    
+    #[serde(default = "default_adaptive_opening_max_percentage")]
+    pub adaptive_opening_max_percentage: f64,
+    
+    #[serde(default = "default_adaptive_opening_min_percentage")]
+    pub adaptive_opening_min_percentage: f64,
     
     // Petiole filtering parameters
     #[serde(default = "default_enable_petiole_filter_lec")]
@@ -63,7 +73,7 @@ pub struct Config {
     #[serde(default = "default_lec_scaling_factor")]
     pub lec_scaling_factor: f64,
     
-    // UPDATED: Dynamic Thornfiddle Lobe Detection Parameters
+    // Dynamic Thornfiddle Lobe Detection Parameters
     #[serde(default = "default_thornfiddle_max_opening_percentage")]
     pub thornfiddle_max_opening_percentage: f64,
     
@@ -80,7 +90,7 @@ pub struct Config {
     #[serde(default = "default_thornfiddle_marked_color_rgb")]
     pub thornfiddle_marked_color_rgb: [u8; 3],
     
-    // NEW: Harmonic Enhancement Control Parameters
+    // Harmonic Enhancement Control Parameters
     #[serde(default = "default_harmonic_strength_multiplier")]
     pub harmonic_strength_multiplier: f64,
     
@@ -104,6 +114,19 @@ fn default_parallel() -> bool {
 
 fn default_gui_resize() -> Option<[u32; 2]> {
     Some([512, 512])
+}
+
+// NEW: Adaptive Opening default functions
+fn default_adaptive_opening_max_density() -> f64 {
+    25.0 // 25% non-transparent pixel threshold
+}
+
+fn default_adaptive_opening_max_percentage() -> f64 {
+    10.0 // 10% opening kernel size at maximum density
+}
+
+fn default_adaptive_opening_min_percentage() -> f64 {
+    1.0 // 1% minimum opening kernel size
 }
 
 fn default_enable_petiole_filter_lec() -> bool {
@@ -147,7 +170,7 @@ fn default_lec_scaling_factor() -> f64 {
     3.0 // Default scaling factor for edge complexity
 }
 
-// UPDATED: Dynamic Thornfiddle default functions
+// Dynamic Thornfiddle default functions
 fn default_thornfiddle_max_opening_percentage() -> f64 {
     30.0 // Maximum opening percentage for circular leaves (shape_index = 1.0)
 }
@@ -169,7 +192,7 @@ fn default_thornfiddle_marked_color_rgb() -> [u8; 3] {
     [255, 215, 0] // Golden yellow for lobe regions
 }
 
-// NEW: Harmonic default functions
+// Harmonic default functions
 fn default_harmonic_strength_multiplier() -> f64 {
     1.0 // Default harmonic strength (1.0 = normal, 2.0 = double strength, etc.)
 }
@@ -208,6 +231,9 @@ impl Config {
             golden_spiral_rotation_steps: 36,
             golden_spiral_phi_exponent_factor,
             use_parallel: true,
+            adaptive_opening_max_density: 25.0,
+            adaptive_opening_max_percentage: 10.0,
+            adaptive_opening_min_percentage: 1.0,
             enable_petiole_filter_lec: true,
             enable_petiole_filter_edge_complexity: true,
             petiole_remove_completely: false,
@@ -250,6 +276,25 @@ impl Config {
             ));
         }
         
+        // NEW: Validate adaptive opening parameters
+        if self.adaptive_opening_max_density <= 0.0 || self.adaptive_opening_max_density > 100.0 {
+            return Err(LeafComplexError::Config(
+                "adaptive_opening_max_density must be between 0.0 and 100.0".to_string(),
+            ));
+        }
+        
+        if self.adaptive_opening_max_percentage <= 0.0 || self.adaptive_opening_max_percentage > 50.0 {
+            return Err(LeafComplexError::Config(
+                "adaptive_opening_max_percentage must be between 0.0 and 50.0".to_string(),
+            ));
+        }
+        
+        if self.adaptive_opening_min_percentage <= 0.0 || self.adaptive_opening_min_percentage >= self.adaptive_opening_max_percentage {
+            return Err(LeafComplexError::Config(
+                "adaptive_opening_min_percentage must be > 0.0 and < adaptive_opening_max_percentage".to_string(),
+            ));
+        }
+        
         // Validate thornfiddle parameters
         if self.thornfiddle_interpolation_points < 10 {
             return Err(LeafComplexError::Config(
@@ -270,7 +315,7 @@ impl Config {
             ));
         }
         
-        // UPDATED: Validate dynamic thornfiddle parameters
+        // Validate dynamic thornfiddle parameters
         if self.thornfiddle_max_opening_percentage <= 0.0 || self.thornfiddle_max_opening_percentage > 50.0 {
             return Err(LeafComplexError::Config(
                 "thornfiddle_max_opening_percentage must be between 0.0 and 50.0".to_string(),
@@ -289,7 +334,7 @@ impl Config {
             ));
         }
         
-        // NEW: Validate harmonic parameters
+        // Validate harmonic parameters
         if self.harmonic_strength_multiplier <= 0.0 {
             return Err(LeafComplexError::Config(
                 "harmonic_strength_multiplier must be > 0.0".to_string(),

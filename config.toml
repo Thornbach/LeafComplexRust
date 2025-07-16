@@ -6,8 +6,13 @@ output_base_dir = "./output"  # Base directory where LEC and LMC subfolders will
 resize_dimensions = [512, 512]  # Optional [width, height] for batch processing
 gui_resize_dimensions = [1024, 1024]  # Optional [width, height] for GUI mode - speeds up analysis
 
-opening_kernel_size = 17 # Diameter/radius for the circular opening algorithm's structuring element
+opening_kernel_size = 9 # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
+
+# NEW: Adaptive Opening Parameters (for pink region marking)
+adaptive_opening_max_density = 75.0      # Density threshold: >=25% non-transparent pixels triggers max opening
+adaptive_opening_max_percentage = 15.0   # Maximum opening percentage of image dimension at high density
+adaptive_opening_min_percentage = 1.0    # Minimum opening percentage of image dimension at low density
 
 # Analysis Parameters
 reference_point_choice = "COM"  # Either "EP" (EmergePoint) or "COM" (Center of Mass)
@@ -30,7 +35,7 @@ pink_threshold_value = 3.0  # Values <= this threshold will be set to zero (appl
 
 # Thornfiddle Analysis Parameters
 thornfiddle_smoothing_strength = 2.0  # Gaussian sigma for periodic smoothing of Thornfiddle_Path (range: 0.5-5.0)
-thornfiddle_interpolation_points = 1000  # Number of points to interpolate for spectral analysis
+thornfiddle_interpolation_points = 300  # Number of points to interpolate for spectral analysis
 
 # Approximate Entropy Parameters
 approximate_entropy_m = 2  # Pattern length for ApEn calculation (typical: 1-3)
@@ -39,25 +44,30 @@ approximate_entropy_r = 0.2  # Tolerance for ApEn calculation (typical: 0.1-0.3 
 # LEC Analysis Parameters
 lec_scaling_factor = 3.0  # Scaling factor for edge complexity calculation
 
-# UPDATED: Dynamic Golden Pixel Lobe Detection Parameters
+# Dynamic Golden Pixel Lobe Detection Parameters
 thornfiddle_max_opening_percentage = 30.0  # Maximum opening percentage for circular leaves (LMC_ShapeIndex = 1.0)
-thornfiddle_min_opening_percentage = 10.0  # Minimum opening percentage for very elongated leaves (LMC_ShapeIndex >= 5.0)
+thornfiddle_min_opening_percentage = 5.0  # Minimum opening percentage for very elongated leaves (LMC_ShapeIndex >= 5.0)
 
 # DEPRECATED: Legacy parameter (kept for backward compatibility, not used in dynamic calculation)
 thornfiddle_opening_size_percentage = 20.0  # Legacy static opening percentage - now calculated dynamically
 
-thornfiddle_pixel_threshold = 10  # Minimum golden pixels crossed to trigger harmonic chain
+thornfiddle_pixel_threshold = 5  # Minimum golden pixels crossed to trigger harmonic chain
 thornfiddle_marked_color_rgb = [255, 215, 0]  # Golden yellow for lobe regions
 
 # Harmonic Enhancement Control Parameters
 harmonic_strength_multiplier = 2.0 # Global harmonic strength multiplier (1.0 = normal, 2.0 = double strength, 0.5 = half strength)
-harmonic_min_chain_length = 10  # Minimum chain length (in contour points) to count as a valid harmonic chain for summary statistics
+harmonic_min_chain_length = 15 # Minimum chain length (in contour points) to count as a valid harmonic chain for summary statistics
 
 # NOTES:
-# - Dynamic opening percentage is calculated using: LMC_ShapeIndex with linear interpolation
-# - Dynamic kernel size = (dynamic_percentage / 100.0) * LMC_SHORTER_dimension (CRITICAL: uses shorter dimension!)
-# - For circular leaves (LMC_ShapeIndex = 1.0): uses thornfiddle_max_opening_percentage of LMC shorter dimension
-# - For elongated leaves (LMC_ShapeIndex >= 5.0): uses thornfiddle_min_opening_percentage of LMC shorter dimension
-# - Wide leaves are handled by flipping Length/Width to normalize LMC_ShapeIndex >= 1.0
-# - This ensures kernel size scales with actual leaf size AND never exceeds the narrow dimension
-# - PREVENTS DESTRUCTION of thin/narrow leaves by constraining kernel to the limiting dimension
+# - ADAPTIVE OPENING: Pink region marking uses density-based kernel sizing
+#   * >=25% non-transparent pixels -> 10% of min(width,height) as kernel size
+#   * <25% non-transparent pixels -> Linear scaling down to 1% minimum
+#   * Formula: opening_percentage = min_percentage + (density/max_density) * (max_percentage - min_percentage)
+# 
+# - DYNAMIC THORNFIDDLE: Golden lobe detection uses LMC shape-based kernel sizing
+#   * Dynamic opening percentage is calculated using: LMC_ShapeIndex with linear interpolation
+#   * Dynamic kernel size = (dynamic_percentage / 100.0) * LMC_SHORTER_dimension
+#   * For circular leaves (LMC_ShapeIndex = 1.0): uses thornfiddle_max_opening_percentage of LMC shorter dimension
+#   * For elongated leaves (LMC_ShapeIndex >= 5.0): uses thornfiddle_min_opening_percentage of LMC shorter dimension
+#   * This ensures kernel size scales with actual leaf size AND never exceeds the narrow dimension
+#   * PREVENTS DESTRUCTION of thin/narrow leaves by constraining kernel to the limiting dimension

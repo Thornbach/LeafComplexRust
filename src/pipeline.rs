@@ -1,4 +1,4 @@
-// src/pipeline.rs - Updated with dynamic thornfiddle opening based on LMC Shape Index
+// Enhanced src/pipeline.rs - Updated with adaptive opening kernel size and simplified Thornfiddle system
 
 use std::path::PathBuf;
 
@@ -13,7 +13,53 @@ use crate::point_analysis::{get_reference_point, get_lmc_reference_point};
 use crate::shape_analysis::{analyze_shape_comprehensive, calculate_length_width_shape_index, calculate_length_width_shape_index_with_shorter, calculate_dynamic_opening_percentage};
 use crate::thornfiddle::{self, calculate_leaf_circumference};
 
-/// Process a single image
+/// Calculate adaptive opening kernel size based on non-transparent pixel density (configurable)
+fn calculate_adaptive_opening_kernel_size(
+    image: &image::RgbaImage,
+    max_density: f64,
+    max_percentage: f64,
+    min_percentage: f64,
+) -> u32 {
+    let (width, height) = image.dimensions();
+    let total_pixels = (width * height) as f64;
+    
+    // Count non-transparent pixels
+    let mut non_transparent_count = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y);
+            if pixel[3] > 0 { // Alpha > 0 means non-transparent
+                non_transparent_count += 1;
+            }
+        }
+    }
+    
+    // Calculate percentage of non-transparent pixels
+    let non_transparent_percentage = (non_transparent_count as f64 / total_pixels) * 100.0;
+    
+    // Calculate opening percentage based on configurable linear scaling
+    let opening_percentage = if non_transparent_percentage >= max_density {
+        max_percentage // Maximum opening percentage
+    } else {
+        // Linear interpolation from max_density -> max_percentage down to 0% -> min_percentage
+        let scaling_factor = non_transparent_percentage / max_density;
+        min_percentage + scaling_factor * (max_percentage - min_percentage)
+    };
+    
+    // Use the smaller image dimension to avoid overly large kernels
+    let image_dimension = std::cmp::min(width, height) as f64;
+    let kernel_size = ((opening_percentage / 100.0) * image_dimension).round() as u32;
+    let adaptive_kernel_size = kernel_size.max(1); // Ensure minimum of 1 pixel
+    
+    println!("Adaptive opening kernel: {:.1}% non-transparent pixels -> {:.1}% opening -> {} pixel kernel (of {} pixel min dimension)", 
+             non_transparent_percentage, opening_percentage, adaptive_kernel_size, image_dimension);
+    println!("Config: max_density={:.1}%, max_percentage={:.1}%, min_percentage={:.1}%",
+             max_density, max_percentage, min_percentage);
+    
+    adaptive_kernel_size
+}
+
+/// Process a single image with simplified Thornfiddle system and adaptive opening
 pub fn process_image(
     input_image: InputImage,
     config: &Config,
@@ -33,8 +79,16 @@ pub fn process_image(
         image
     };
     
-    // Step 2: Apply circular opening
-    let opened_image = apply_opening(&processed_image, config.opening_kernel_size)?;
+    // Step 2: Calculate adaptive opening kernel size using config parameters
+    let adaptive_opening_kernel_size = calculate_adaptive_opening_kernel_size(
+        &processed_image,
+        config.adaptive_opening_max_density,
+        config.adaptive_opening_max_percentage,
+        config.adaptive_opening_min_percentage,
+    );
+    
+    // Step 2 (continued): Apply circular opening with adaptive kernel size
+    let opened_image = apply_opening(&processed_image, adaptive_opening_kernel_size)?;
     
     // Step 2 (continued): Mark opened regions
     let mut marked_image = mark_opened_regions(
@@ -85,26 +139,25 @@ pub fn process_image(
         config.thornfiddle_min_opening_percentage,
     );
     
-    // STEP 2.8: Calculate Dynamic Kernel Size from LMC SHORTER Dimension (CRITICAL FIX!)
+    // STEP 2.8: Calculate Dynamic Kernel Size from LMC SHORTER Dimension
     let dynamic_kernel_size = ((dynamic_opening_percentage / 100.0) * lmc_shorter_dimension).round() as u32;
-    let dynamic_kernel_size = dynamic_kernel_size.max(1); // Ensure minimum of 1 pixel
+    let dynamic_kernel_size = dynamic_kernel_size.max(1);
     
-    println!("Dynamic opening calculation: LMC Shape Index {:.3} -> {:.1}% -> {} pixel kernel (of {:.1} pixel SHORTER dimension)", 
+    println!("Dynamic thornfiddle opening: LMC Shape Index {:.3} -> {:.1}% -> {} pixel kernel (of {:.1} pixel SHORTER dimension)", 
              lmc_shape_index, dynamic_opening_percentage, dynamic_kernel_size, lmc_shorter_dimension);
     
     // Step 3: Create Thornfiddle Image with DYNAMIC golden lobe regions
     let thornfiddle_image = create_thornfiddle_image(
         &lmc_image,
-        dynamic_kernel_size, // Use dynamic kernel size based on LMC SHORTER dimension
+        dynamic_kernel_size,
         config.thornfiddle_marked_color_rgb,
     )?;
     
     // Calculate comprehensive shape metrics including biological dimensions
-    // For the original image: get area, circularity, length, width, outline count, and shape index
     let (area, lec_circularity, _orig_length, _orig_width, outline_count, _orig_shape_index) = 
         analyze_shape_comprehensive(&processed_image, config.marked_region_color_rgb);
     
-    // For the LMC image: just get circularity (we already calculated length/width/shape_index above)
+    // For the LMC image: just get circularity
     let (_, lmc_circularity) = crate::shape_analysis::analyze_shape(&lmc_image, config.marked_region_color_rgb);
     
     if debug {
@@ -115,7 +168,10 @@ pub fn process_image(
         println!("  Outline count: {} points", outline_count);
         println!("  LEC Circularity: {:.6}", lec_circularity);
         println!("  LMC Circularity: {:.6}", lmc_circularity);
-        println!("  Dynamic Opening: {:.1}% -> {} pixel kernel (of {:.1} pixel LMC SHORTER dimension)", 
+        println!("  Adaptive Opening (pink marking): {} pixel kernel (config: max_density={:.1}%, max_opening={:.1}%, min_opening={:.1}%)", 
+                 adaptive_opening_kernel_size, config.adaptive_opening_max_density, 
+                 config.adaptive_opening_max_percentage, config.adaptive_opening_min_percentage);
+        println!("  Dynamic Thornfiddle (golden lobes): {:.1}% -> {} pixel kernel (of {:.1} pixel LMC SHORTER dimension)", 
                  dynamic_opening_percentage, dynamic_kernel_size, lmc_shorter_dimension);
     }
     
@@ -125,7 +181,6 @@ pub fn process_image(
         std::fs::create_dir_all(&debug_dir).map_err(|e| LeafComplexError::Io(e))?;
         
         save_image(&marked_image, debug_dir.join(format!("{}_marked.png", filename)))?;
-        // Save Thornfiddle image showing golden lobe regions
         save_image(&thornfiddle_image, debug_dir.join(format!("{}_thornfiddle.png", filename)))?;
     }
     
@@ -181,7 +236,7 @@ pub fn process_image(
         config.pink_threshold_value,
     );
     
-    // UPDATED: Step 5.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LEC features
+    // Step 5.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LEC features
     let lec_circumference = calculate_leaf_circumference(&lec_contour);
     let lec_harmonic_result = thornfiddle::calculate_thornfiddle_path_harmonic(
         &lec_features,
@@ -220,8 +275,9 @@ pub fn process_image(
             println!("Pink threshold filter enabled: values <= {:.1} set to zero", config.pink_threshold_value);
         }
         
-        println!("LEC harmonic chains: {} valid / {} total", 
-                 lec_harmonic_result.valid_chain_count, lec_harmonic_result.total_chain_count);
+        println!("LEC harmonic chains: {} valid / {} total, weighted score: {:.1}", 
+                 lec_harmonic_result.valid_chain_count, lec_harmonic_result.total_chain_count, 
+                 lec_harmonic_result.weighted_chain_score);
     }
     
     // Step 6: LMC Analysis (Pink regions are TRANSPARENT) - Use LMC reference point
@@ -242,7 +298,7 @@ pub fn process_image(
         false, // is_lec = false
     )?;
     
-    // UPDATED: Step 6.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LMC features  
+    // Step 6.5: Calculate Golden Pixel Harmonic Thornfiddle Path for LMC features  
     let lmc_circumference = calculate_leaf_circumference(&lmc_contour);
     let lmc_harmonic_result = thornfiddle::calculate_thornfiddle_path_harmonic(
         &lmc_features,
@@ -266,18 +322,19 @@ pub fn process_image(
     
     if debug {
         println!("LMC contour points: {}", lmc_contour.len());
-        println!("LMC harmonic chains: {} valid / {} total", 
-                 lmc_harmonic_result.valid_chain_count, lmc_harmonic_result.total_chain_count);
+        println!("LMC harmonic chains: {} valid / {} total, weighted score: {:.1}", 
+                 lmc_harmonic_result.valid_chain_count, lmc_harmonic_result.total_chain_count,
+                 lmc_harmonic_result.weighted_chain_score);
     }
     
     // Step 7: Write feature CSVs
     write_lec_csv(&lec_features_with_harmonic, &config.output_base_dir, &filename)?;
     
-   // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path (using LMC features)
-   let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
-    &lmc_features_with_harmonic,
-    config.thornfiddle_smoothing_strength
-);
+    // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path (simplified - no rhythm analysis)
+    let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
+        &lmc_features_with_harmonic,
+        config.thornfiddle_smoothing_strength
+    );
 
     // Step 8b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
     let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features_with_harmonic);
@@ -310,8 +367,8 @@ pub fn process_image(
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features_with_harmonic, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
-    // UPDATED: Step 9: Create Thornfiddle summary with NEW shape index fields and dynamic kernel size
-    // Use LMC harmonic chain count for the summary (as it's used for the main spectral entropy calculation)
+    // Step 9: Create Thornfiddle summary with weighted metrics (removed rhythm regularity)
+    // Use LMC harmonic result for the main spectral entropy calculation and weighted metrics
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
         &filename,
@@ -331,10 +388,20 @@ pub fn process_image(
         lmc_width,          // LMC biological width
         lmc_shape_index,    // LMC Shape Index
         dynamic_opening_percentage, // Dynamic opening percentage used
-        dynamic_kernel_size, // NEW: Dynamic kernel size used (in pixels)
+        dynamic_kernel_size, // Dynamic kernel size used (in pixels)
         outline_count,      // outline point count
         lmc_harmonic_result.valid_chain_count, // harmonic chain count from LMC analysis
+        lmc_harmonic_result.weighted_chain_score, // Chain intensity weighting
     )?;
+
+    if debug {
+        println!("Simplified Thornfiddle metrics for {}:", filename);
+        println!("  Spectral Entropy: {:.6}", spectral_entropy);
+        println!("  Weighted Chain Score: {:.2}", lmc_harmonic_result.weighted_chain_score);
+        println!("  Adaptive Opening Config: max_density={:.1}%, max_opening={:.1}%, min_opening={:.1}%", 
+                 config.adaptive_opening_max_density, config.adaptive_opening_max_percentage, config.adaptive_opening_min_percentage);
+        println!("  Adaptive Opening Result: {} pixels", adaptive_opening_kernel_size);
+    }
     
     Ok(())
 }
