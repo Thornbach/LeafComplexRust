@@ -36,7 +36,8 @@ pub struct HarmonicResult {
 /// S(CV) = 1 / (1 + exp(-k * (CV - c)))
 /// This provides continuous scaling from near-zero for simple shapes to 1 for complex shapes
 fn calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation: f64, k: f64, c: f64) -> f64 {
-    1.0 / (1.0 + (-k * (coefficient_of_variation - c)).exp())
+    let sigmoid = 1.0 / (1.0 + (-k * (coefficient_of_variation - c)).exp());
+    sigmoid.powf(1.0) // Stays low, then climbs steeply
 }
 
 /// Extract contour signature using absolute distance deviations from mean radius
@@ -513,9 +514,9 @@ fn calculate_shannon_entropy(powers: &[f64]) -> f64 {
     }
 }
 
-/// REVISED: Calculate spectral entropy from Harmonic Thornfiddle Path with continuous sigmoid scaling
 pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
     features: &[MarginalPointFeatures],
+    chain_count: usize,  // NEW: Pass chain count for linear scaling
     smoothing_strength: f64,
     sigmoid_k: f64,
     sigmoid_c: f64,
@@ -552,22 +553,34 @@ pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
     }
     
     let raw_entropy = calculate_shannon_entropy(&powers);
-    
-    // Apply continuous sigmoid scaling
+
+    // Apply sigmoid scaling
     let sigmoid_scaling = calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation, sigmoid_k, sigmoid_c);
-    let final_entropy = raw_entropy * sigmoid_scaling;
-    
+
+    // NEW: Apply Weber-Fechner chain factor scaling with minimum baseline
+    let chain_factor = if chain_count == 0 {
+        0.1  // 10% minimum for leaves with no chains (digitization noise baseline)
+    } else {
+        (1.0 + chain_count as f64).ln() / (1.0 + 10.0_f64).ln()
+    };
+    let final_entropy = raw_entropy * sigmoid_scaling * chain_factor;
+    let final_entropy = final_entropy.max(raw_entropy * 0.01); // Ensure minimum 1% of raw entropy
+
     (final_entropy, smoothed_signal)
 }
 
-/// Legacy version for backward compatibility
+/// Legacy version for backward compatibility (assumes 0 chains)
 pub fn calculate_spectral_entropy_from_thornfiddle_path(
     features: &[MarginalPointFeatures],
     smoothing_strength: f64
 ) -> (f64, Vec<f64>) {
-    // Use default sigmoid parameters
-    calculate_spectral_entropy_from_harmonic_thornfiddle_path(features, smoothing_strength, 20.0, 0.03)
+    // Use default sigmoid parameters and 0 chains for legacy compatibility
+    calculate_spectral_entropy_from_harmonic_thornfiddle_path(features, 0, smoothing_strength, 20.0, 0.03)
 }
+
+
+
+// (Removed duplicate legacy function definition)
 
 /// Calculate approximate entropy from Pink Path
 pub fn calculate_approximate_entropy_from_pink_path(

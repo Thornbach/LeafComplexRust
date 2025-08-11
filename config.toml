@@ -60,8 +60,9 @@ harmonic_strength_multiplier = 2.0  # Global harmonic strength multiplier (1.0 =
 harmonic_min_chain_length = 15  # Minimum chain length (in contour points) to count as a valid harmonic chain
 
 # NEW: Spectral Entropy Continuous Sigmoid Scaling Parameters
-spectral_entropy_sigmoid_k = 20.0  # Steepness of sigmoid transition (higher = sharper transition around threshold)
-spectral_entropy_sigmoid_c = 0.04  # Center point of sigmoid transition (coefficient of variation threshold)
+spectral_entropy_sigmoid_k = 25.0  # Steepness of sigmoid transition (higher = sharper transition around threshold)
+spectral_entropy_sigmoid_c = 0.05  # Center point of sigmoid transition (coefficient of variation threshold)
+
 
 # NOTES:
 #    ADAPTIVE OPENING: Pink region marking uses density-based kernel sizing

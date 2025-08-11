@@ -332,19 +332,20 @@ pub fn process_image(
     // Step 7: Write feature CSVs
     write_lec_csv(&lec_features_with_harmonic, &config.output_base_dir, &filename)?;
     
-    // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path with continuous sigmoid scaling
+    // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path with linear chain scaling
     let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
         &lmc_features_with_harmonic,
+        lmc_harmonic_result.valid_chain_count,  // NEW: Pass chain count for linear scaling
         config.thornfiddle_smoothing_strength,
-        config.spectral_entropy_sigmoid_k,    // NEW: Use configurable sigmoid parameters
-        config.spectral_entropy_sigmoid_c,    // NEW: Use configurable sigmoid parameters
+        config.spectral_entropy_sigmoid_k,
+        config.spectral_entropy_sigmoid_c,
     );
 
-    // Step 8b: Calculate spectral entropy from Pink Path with continuous sigmoid scaling
+    // Step 8b: Calculate spectral entropy from Pink Path (no chain count argument)
     let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(
         &lec_features_with_harmonic,
-        config.spectral_entropy_sigmoid_k,    // NEW: Use configurable sigmoid parameters
-        config.spectral_entropy_sigmoid_c,    // NEW: Use configurable sigmoid parameters
+        config.spectral_entropy_sigmoid_k,
+        config.spectral_entropy_sigmoid_c,
     );
 
     // Step 8c: Calculate approximate entropy from Pink Path (using LEC features, respects petiole filtering)
