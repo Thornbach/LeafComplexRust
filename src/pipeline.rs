@@ -1,4 +1,4 @@
-// Enhanced src/pipeline.rs - Updated with adaptive opening kernel size and simplified Thornfiddle system
+// Enhanced src/pipeline.rs - Updated with revised harmonic enhancement and continuous sigmoid scaling
 
 use std::path::PathBuf;
 
@@ -59,7 +59,7 @@ fn calculate_adaptive_opening_kernel_size(
     adaptive_kernel_size
 }
 
-/// Process a single image with simplified Thornfiddle system and adaptive opening
+/// Process a single image with revised harmonic enhancement and continuous sigmoid scaling
 pub fn process_image(
     input_image: InputImage,
     config: &Config,
@@ -248,6 +248,7 @@ pub fn process_image(
         config.thornfiddle_pixel_threshold,
         config.harmonic_min_chain_length,
         config.harmonic_strength_multiplier,
+        config.harmonic_max_harmonics, // NEW: Use configurable max harmonics
     );
     
     // Update LEC features with harmonic values
@@ -310,6 +311,7 @@ pub fn process_image(
         config.thornfiddle_pixel_threshold,
         config.harmonic_min_chain_length,
         config.harmonic_strength_multiplier,
+        config.harmonic_max_harmonics, // NEW: Use configurable max harmonics
     );
     
     // Update LMC features with harmonic values
@@ -330,14 +332,20 @@ pub fn process_image(
     // Step 7: Write feature CSVs
     write_lec_csv(&lec_features_with_harmonic, &config.output_base_dir, &filename)?;
     
-    // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path (simplified - no rhythm analysis)
+    // Step 8: Calculate spectral entropy from HARMONIC Thornfiddle Path with continuous sigmoid scaling
     let (spectral_entropy, smoothed_thornfiddle_path) = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
         &lmc_features_with_harmonic,
-        config.thornfiddle_smoothing_strength
+        config.thornfiddle_smoothing_strength,
+        config.spectral_entropy_sigmoid_k,    // NEW: Use configurable sigmoid parameters
+        config.spectral_entropy_sigmoid_c,    // NEW: Use configurable sigmoid parameters
     );
 
-    // Step 8b: Calculate spectral entropy from Pink Path (using LEC features, no smoothing)
-    let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(&lec_features_with_harmonic);
+    // Step 8b: Calculate spectral entropy from Pink Path with continuous sigmoid scaling
+    let spectral_entropy_pink = thornfiddle::calculate_spectral_entropy_from_pink_path(
+        &lec_features_with_harmonic,
+        config.spectral_entropy_sigmoid_k,    // NEW: Use configurable sigmoid parameters
+        config.spectral_entropy_sigmoid_c,    // NEW: Use configurable sigmoid parameters
+    );
 
     // Step 8c: Calculate approximate entropy from Pink Path (using LEC features, respects petiole filtering)
     let approximate_entropy = thornfiddle::calculate_approximate_entropy_from_pink_path(
@@ -346,10 +354,12 @@ pub fn process_image(
         config.approximate_entropy_r,
     );
 
-    // Step 8d: Calculate spectral entropy from LEC contour shape
+    // Step 8d: Calculate spectral entropy from LEC contour shape with continuous sigmoid scaling
     let spectral_entropy_contour = thornfiddle::calculate_spectral_entropy_from_contour(
         &lec_contour,
-        config.thornfiddle_interpolation_points
+        config.thornfiddle_interpolation_points,
+        config.spectral_entropy_sigmoid_k,    // NEW: Use configurable sigmoid parameters
+        config.spectral_entropy_sigmoid_c,    // NEW: Use configurable sigmoid parameters
     );
 
     // Step 8e: Calculate Edge Complexity from Pink Path values
@@ -367,7 +377,7 @@ pub fn process_image(
     // Write LMC CSV with smoothed Thornfiddle Path values
     write_lmc_csv(&lmc_features_with_harmonic, &config.output_base_dir, &filename, Some(&smoothed_thornfiddle_path))?;
 
-    // Step 9: Create Thornfiddle summary with weighted metrics (removed rhythm regularity)
+    // Step 9: Create Thornfiddle summary with weighted metrics
     // Use LMC harmonic result for the main spectral entropy calculation and weighted metrics
     thornfiddle::create_thornfiddle_summary(
         &config.output_base_dir,
@@ -395,9 +405,13 @@ pub fn process_image(
     )?;
 
     if debug {
-        println!("Simplified Thornfiddle metrics for {}:", filename);
+        println!("Revised Thornfiddle metrics for {}:", filename);
         println!("  Spectral Entropy: {:.6}", spectral_entropy);
         println!("  Weighted Chain Score: {:.2}", lmc_harmonic_result.weighted_chain_score);
+        println!("  Principled Harmonic Enhancement: max_harmonics={}, strength={:.1}", 
+                 config.harmonic_max_harmonics, config.harmonic_strength_multiplier);
+        println!("  Continuous Sigmoid Scaling: k={:.1}, c={:.3}", 
+                 config.spectral_entropy_sigmoid_k, config.spectral_entropy_sigmoid_c);
         println!("  Adaptive Opening Config: max_density={:.1}%, max_opening={:.1}%, min_opening={:.1}%", 
                  config.adaptive_opening_max_density, config.adaptive_opening_max_percentage, config.adaptive_opening_min_percentage);
         println!("  Adaptive Opening Result: {} pixels", adaptive_opening_kernel_size);

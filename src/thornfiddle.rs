@@ -1,4 +1,4 @@
-// Enhanced src/thornfiddle.rs - Final 10% improvements with chain intensity, frequency weighting, and rhythm analysis
+// Revised src/thornfiddle.rs - Principled harmonic enhancement and continuous spectral entropy scaling
 
 use std::path::Path;
 use std::fs;
@@ -23,13 +23,20 @@ struct GoldenChain {
     max_crossing_count: u32,
 }
 
-/// ENHANCED: Result structure containing harmonic values, chain statistics, and new weighted metrics
+/// Result structure containing harmonic values, chain statistics, and weighted metrics
 #[derive(Debug)]
 pub struct HarmonicResult {
     pub harmonic_values: Vec<f64>,
     pub valid_chain_count: usize,
     pub total_chain_count: usize,
-    pub weighted_chain_score: f64,  // NEW: Chain intensity weighting
+    pub weighted_chain_score: f64,
+}
+
+/// NEW: Calculate spectral entropy sigmoid scaling factor
+/// S(CV) = 1 / (1 + exp(-k * (CV - c)))
+/// This provides continuous scaling from near-zero for simple shapes to 1 for complex shapes
+fn calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation: f64, k: f64, c: f64) -> f64 {
+    1.0 / (1.0 + (-k * (coefficient_of_variation - c)).exp())
 }
 
 /// Extract contour signature using absolute distance deviations from mean radius
@@ -106,10 +113,12 @@ fn smooth_signal(signal: &[f64], window_size: usize) -> Vec<f64> {
     smoothed
 }
 
-/// Calculate spectral entropy from contour with magnitude-based thresholding
+/// REVISED: Calculate spectral entropy from contour with continuous sigmoid scaling
 pub fn calculate_spectral_entropy_from_contour(
     contour: &[(u32, u32)], 
-    interpolation_points: usize
+    interpolation_points: usize,
+    sigmoid_k: f64,
+    sigmoid_c: f64,
 ) -> f64 {
     // Extract contour signature
     let signature = extract_contour_signature(contour, interpolation_points);
@@ -117,32 +126,36 @@ pub fn calculate_spectral_entropy_from_contour(
         return 0.0;
     }
     
-    // Calculate statistics of absolute deviations
-    let mean_deviation = signature.iter().sum::<f64>() / signature.len() as f64;
-    let max_deviation = signature.iter().fold(0.0f64, |a, &b| a.max(b));
+    // Calculate coefficient of variation
+    let mean = signature.iter().sum::<f64>() / signature.len() as f64;
+    let variance = signature.iter()
+        .map(|&x| (x - mean).powi(2))
+        .sum::<f64>() / signature.len() as f64;
+    let std_dev = variance.sqrt();
     
-    // Threshold for "simple" shapes based on absolute deviation magnitude
-    if mean_deviation < 5.0 {
-        return 0.001 + mean_deviation * 0.0001;
-    }
+    let coefficient_of_variation = if mean > 1e-6 { std_dev / mean } else { 0.0 };
     
-    if max_deviation < 10.0 {
-        return 0.01 + mean_deviation * 0.001;
-    }
-    
-    // For shapes with significant variation, proceed with spectral analysis
+    // Calculate raw spectral entropy
     let powers = calculate_power_spectrum_periodic(&signature);
     if powers.is_empty() {
         return 0.0;
     }
     
-    // Calculate Shannon entropy
-    let entropy = calculate_shannon_entropy(&powers);
+    let raw_entropy = calculate_shannon_entropy(&powers);
     
-    // Scale entropy based on the magnitude of deviations
-    let magnitude_factor = (mean_deviation / 20.0).min(1.0);
+    // Apply continuous sigmoid scaling
+    let sigmoid_scaling = calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation, sigmoid_k, sigmoid_c);
     
-    entropy * magnitude_factor
+    raw_entropy * sigmoid_scaling
+}
+
+/// Legacy version for backward compatibility
+pub fn calculate_spectral_entropy_from_contour_legacy(
+    contour: &[(u32, u32)], 
+    interpolation_points: usize
+) -> f64 {
+    // Use default sigmoid parameters
+    calculate_spectral_entropy_from_contour(contour, interpolation_points, 20.0, 0.03)
 }
 
 /// Detect petiole sequence in a signal using outlier analysis
@@ -425,8 +438,6 @@ pub fn periodic_gaussian_smooth(signal: &[f64], window_size: usize, sigma: f64) 
     smoothed
 }
 
-// Removed rhythm regularity and frequency band weighting functions
-
 /// Calculate power spectrum using FFT for periodic signal
 fn calculate_power_spectrum_periodic(signal: &[f64]) -> Vec<f64> {
     if signal.len() < 4 {
@@ -502,10 +513,12 @@ fn calculate_shannon_entropy(powers: &[f64]) -> f64 {
     }
 }
 
-/// Calculate spectral entropy from Harmonic Thornfiddle Path (simplified - removed rhythm and frequency weighting)
+/// REVISED: Calculate spectral entropy from Harmonic Thornfiddle Path with continuous sigmoid scaling
 pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
     features: &[MarginalPointFeatures],
-    smoothing_strength: f64
+    smoothing_strength: f64,
+    sigmoid_k: f64,
+    sigmoid_c: f64,
 ) -> (f64, Vec<f64>) {
     if features.is_empty() {
         return (0.0, Vec::new());
@@ -523,7 +536,7 @@ pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
     let sigma = smoothing_strength.max(0.5);
     let smoothed_signal = periodic_gaussian_smooth(&harmonic_signal, window_size, sigma);
     
-    // Calculate statistics of the smoothed signal
+    // Calculate coefficient of variation
     let mean = smoothed_signal.iter().sum::<f64>() / smoothed_signal.len() as f64;
     let variance = smoothed_signal.iter()
         .map(|&x| (x - mean).powi(2))
@@ -532,37 +545,28 @@ pub fn calculate_spectral_entropy_from_harmonic_thornfiddle_path(
     
     let coefficient_of_variation = if mean > 1e-6 { std_dev / mean } else { 0.0 };
     
-    if coefficient_of_variation < 0.01 {
-        return (0.001 + coefficient_of_variation * 0.01, smoothed_signal);
-    }
-    
-    if coefficient_of_variation < 0.05 {
-        return (0.01 + coefficient_of_variation * 0.1, smoothed_signal);
-    }
-    
-    // For signals with significant variation, proceed with basic spectral analysis
+    // Calculate raw spectral entropy
     let powers = calculate_power_spectrum_periodic(&smoothed_signal);
     if powers.is_empty() {
         return (0.0, smoothed_signal);
     }
     
-    // Calculate Shannon entropy from basic spectrum
-    let entropy = calculate_shannon_entropy(&powers);
+    let raw_entropy = calculate_shannon_entropy(&powers);
     
-    // Scale entropy based on coefficient of variation
-    let variation_factor = (coefficient_of_variation * 2.0).min(1.0);
-    let final_entropy = entropy * variation_factor;
+    // Apply continuous sigmoid scaling
+    let sigmoid_scaling = calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation, sigmoid_k, sigmoid_c);
+    let final_entropy = raw_entropy * sigmoid_scaling;
     
     (final_entropy, smoothed_signal)
 }
 
-/// Legacy spectral entropy function (maintained for backward compatibility)
+/// Legacy version for backward compatibility
 pub fn calculate_spectral_entropy_from_thornfiddle_path(
     features: &[MarginalPointFeatures],
     smoothing_strength: f64
 ) -> (f64, Vec<f64>) {
-    let (entropy, smoothed) = calculate_spectral_entropy_from_harmonic_thornfiddle_path(features, smoothing_strength);
-    (entropy, smoothed)
+    // Use default sigmoid parameters
+    calculate_spectral_entropy_from_harmonic_thornfiddle_path(features, smoothing_strength, 20.0, 0.03)
 }
 
 /// Calculate approximate entropy from Pink Path
@@ -642,7 +646,7 @@ fn calculate_max_distance(pattern1: &[f64], pattern2: &[f64]) -> f64 {
         .fold(0.0, |acc, diff| acc.max(diff))
 }
 
-/// Create Thornfiddle summary CSV with weighted chain metrics (removed rhythm regularity)
+/// Create Thornfiddle summary CSV with weighted chain metrics
 pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
@@ -665,7 +669,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
     dynamic_kernel_size: u32,
     outline_count: u32,
     harmonic_chain_count: usize,
-    weighted_chain_score: f64,     // Chain intensity weighting
+    weighted_chain_score: f64,
 ) -> Result<()> {
     let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
     fs::create_dir_all(&thornfiddle_dir).map_err(|e| LeafComplexError::Io(e))?;
@@ -684,7 +688,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // Write header with weighted chain metrics (removed rhythm regularity)
+        // Write header with weighted chain metrics
         writer.write_record(&[
             "ID",
             "Subfolder",
@@ -706,13 +710,13 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
             "Dynamic_Kernel_Size",
             "Outline_Count",
             "Harmonic_Chain_Count",
-            "Weighted_Chain_Score",    // Chain intensity scoring
+            "Weighted_Chain_Score",
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
         
         writer
     };
     
-    // Write data with weighted chain metrics (removed rhythm regularity)
+    // Write data with weighted chain metrics
     writer.write_record(&[
         filename,
         subfolder,
@@ -734,7 +738,7 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         &dynamic_kernel_size.to_string(),
         &outline_count.to_string(),
         &harmonic_chain_count.to_string(),
-        &format!("{:.2}", weighted_chain_score),    // Chain intensity weighting
+        &format!("{:.2}", weighted_chain_score),
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     writer.flush().map_err(|e| LeafComplexError::CsvOutput(csv::Error::from(e)))?;
@@ -761,7 +765,7 @@ pub fn calculate_thornfiddle_path(feature: &MarginalPointFeatures) -> f64 {
     feature.diego_path_length * multiplier
 }
 
-/// ENHANCED: Calculate Thornfiddle Path with Golden Pixel Harmonic enhancement and chain intensity weighting
+/// REVISED: Calculate Thornfiddle Path with principled harmonic enhancement
 pub fn calculate_thornfiddle_path_harmonic(
     features: &[MarginalPointFeatures],
     leaf_circumference: f64,
@@ -772,6 +776,7 @@ pub fn calculate_thornfiddle_path_harmonic(
     pixel_threshold: u32,
     min_chain_length: usize,
     harmonic_strength_multiplier: f64,
+    max_harmonics: usize,
 ) -> HarmonicResult {
     if features.is_empty() {
         return HarmonicResult {
@@ -782,9 +787,9 @@ pub fn calculate_thornfiddle_path_harmonic(
         };
     }
     
-    println!("Calculating harmonic Thornfiddle with golden pixel detection");
-    println!("Parameters: pixel_threshold={}, min_chain_length={}, harmonic_strength={}",
-             pixel_threshold, min_chain_length, harmonic_strength_multiplier);
+    println!("Calculating principled harmonic Thornfiddle with geometric enhancement");
+    println!("Parameters: pixel_threshold={}, min_chain_length={}, max_harmonics={}, harmonic_strength={}",
+             pixel_threshold, min_chain_length, max_harmonics, harmonic_strength_multiplier);
     
     // Step 1: Detect golden chains based on pixel crossings
     let golden_chains = detect_golden_chains(
@@ -805,7 +810,7 @@ pub fn calculate_thornfiddle_path_harmonic(
     
     let valid_chain_count = valid_chains.len();
     
-    // NEW: Step 2.5: Calculate weighted chain score (chain intensity weighting)
+    // Step 2.5: Calculate weighted chain score (chain intensity weighting)
     let weighted_chain_score: f64 = valid_chains.iter()
         .map(|chain| (chain.total_golden_pixels as f64) * (chain.length as f64))
         .sum();
@@ -818,36 +823,108 @@ pub fn calculate_thornfiddle_path_harmonic(
         .map(|feature| calculate_thornfiddle_path(feature))
         .collect();
     
-    // Step 4: Calculate global complexity based on VALID chains only
-    let global_complexity = calculate_global_golden_complexity(&valid_chains.iter().cloned().cloned().collect::<Vec<_>>());
-    
-    // Step 5: Apply harmonics to each point using VALID chains only
+    // Step 4: Apply principled harmonics to each valid chain
     let mut harmonic_thornfiddle = base_thornfiddle.clone();
     
-    for (chain_index, &chain) in valid_chains.iter().enumerate() {
-        apply_golden_chain_harmonics(
+    for chain in valid_chains.iter() {
+        apply_principled_harmonic_enhancement(
             &mut harmonic_thornfiddle,
             chain,
-            chain_index,
-            global_complexity,
             leaf_circumference,
-            features,
-            valid_chain_count,
             harmonic_strength_multiplier,
+            max_harmonics,
+            features, // Pass the features to access path lengths
         );
     }
     
-    // Step 6: Handle additive effects for overlapping VALID chains
-    apply_additive_harmonic_effects(&mut harmonic_thornfiddle, &valid_chains.iter().cloned().cloned().collect::<Vec<_>>());
-    
-    println!("Harmonic enhancement complete - {} valid chains processed, weighted score: {:.1}", 
+    println!("Principled harmonic enhancement complete - {} valid chains processed, weighted score: {:.1}", 
              valid_chain_count, weighted_chain_score);
     
     HarmonicResult {
         harmonic_values: harmonic_thornfiddle,
         valid_chain_count,
         total_chain_count,
-        weighted_chain_score,  // NEW: Include weighted score
+        weighted_chain_score,
+    }
+}
+
+/// NEW: Apply principled harmonic enhancement based on deepest point weighting
+fn apply_principled_harmonic_enhancement(
+    harmonic_values: &mut [f64],
+    chain: &GoldenChain,
+    leaf_circumference: f64,
+    harmonic_strength_multiplier: f64,
+    max_harmonics: usize,
+    features: &[MarginalPointFeatures], // Added to access path lengths
+) {
+    // Calculate segment length relative to leaf circumference
+    let segment_length = chain.length as f64;
+    let circumference_ratio = segment_length / leaf_circumference;
+    
+    // Enhancement Richness: N_h = floor(N_max * (L_seg / C_leaf))
+    let num_harmonics = ((max_harmonics as f64) * circumference_ratio).floor() as usize;
+    let num_harmonics = num_harmonics.max(1).min(max_harmonics);
+    
+    // Base frequency normalized by leaf circumference
+    let base_frequency = 2.0 * PI / leaf_circumference;
+    
+    // CORRECTED: Find the deepest point (point with longest geodesic path) in the segment
+    let mut deepest_point_idx = chain.start_index;
+    let mut max_path_length = 0.0;
+    
+    for i in chain.start_index..=chain.end_index {
+        if i < features.len() {
+            let path_length = features[i].diego_path_length;
+            if path_length > max_path_length {
+                max_path_length = path_length;
+                deepest_point_idx = i;
+            }
+        }
+    }
+    
+    println!("Chain enhancement: length={}, circumference_ratio={:.4}, harmonics={}, deepest_point_idx={}", 
+             segment_length, circumference_ratio, num_harmonics, deepest_point_idx);
+    
+    // Apply harmonic enhancement to each point in the chain
+    for i in chain.start_index..=chain.end_index {
+        if i >= harmonic_values.len() {
+            break;
+        }
+        
+        // CORRECTED: Enhancement Intensity based on distance from deepest point
+        let distance_from_deepest = if deepest_point_idx >= chain.start_index && deepest_point_idx <= chain.end_index {
+            // Calculate relative distance from the deepest point within the segment
+            let dist_to_deepest = (i as i32 - deepest_point_idx as i32).abs() as f64;
+            let max_distance_in_segment = ((chain.end_index - chain.start_index) as f64 / 2.0).max(1.0);
+            
+            // W_pos: 1.0 at deepest point, decreasing linearly to 0.0 at segment ends
+            1.0 - (dist_to_deepest / max_distance_in_segment).min(1.0)
+        } else {
+            // Fallback to linear if deepest point detection fails
+            let position_in_chain = i - chain.start_index;
+            let chain_length = chain.end_index - chain.start_index + 1;
+            position_in_chain as f64 / chain_length as f64
+        };
+        
+        // Calculate harmonic sum: Σ (1/k) * sin(2π * k * f_base * L_pos)
+        let mut harmonic_sum = 0.0;
+        for k in 1..=num_harmonics {
+            let amplitude = 1.0 / k as f64; // Standard harmonic series decay
+            let phase = base_frequency * k as f64 * (i - chain.start_index) as f64;
+            harmonic_sum += amplitude * phase.sin();
+        }
+        
+        // Enhancement = W_pos * harmonic_sum * strength_multiplier
+        let enhancement = distance_from_deepest * harmonic_sum * harmonic_strength_multiplier;
+        
+        // Apply enhancement to base value
+        let base_value = harmonic_values[i];
+        harmonic_values[i] = base_value + (base_value * enhancement);
+        
+        if i == deepest_point_idx {
+            println!("  Deepest point enhancement: W_pos={:.3}, enhancement={:.3}", 
+                     distance_from_deepest, enhancement);
+        }
     }
 }
 
@@ -950,178 +1027,6 @@ fn detect_golden_chains(
     chains
 }
 
-/// Calculate global complexity factor with isolation bonus
-fn calculate_global_golden_complexity(chains: &[GoldenChain]) -> f64 {
-    if chains.is_empty() {
-        return 0.0;
-    }
-    
-    let total_chain_length: usize = chains.iter().map(|c| c.length).sum();
-    let total_golden_pixels: u32 = chains.iter().map(|c| c.total_golden_pixels).sum();
-    let avg_golden_intensity: f64 = total_golden_pixels as f64 / chains.len() as f64;
-    
-    let isolation_factor = if chains.len() <= 2 {
-        1.0
-    } else {
-        1.0 + (chains.len() as f64 - 2.0) * 0.3
-    };
-    
-    let chain_count_factor = (chains.len() as f64).ln() + 1.0;
-    
-    chain_count_factor * (total_chain_length as f64).sqrt() * avg_golden_intensity.sqrt() * isolation_factor
-}
-
-/// Apply harmonic enhancement with configurable strength and isolation effects
-fn apply_golden_chain_harmonics(
-    harmonic_values: &mut [f64],
-    chain: &GoldenChain,
-    chain_index: usize,
-    global_complexity: f64,
-    leaf_circumference: f64,
-    features: &[MarginalPointFeatures],
-    _total_valid_chains: usize,
-    harmonic_strength_multiplier: f64,
-) {
-    let max_harmonics = calculate_max_harmonics(chain.length);
-    let base_frequency = calculate_base_frequency(leaf_circumference, features.len());
-    let accumulated_stress = calculate_accumulated_stress(chain_index, global_complexity);
-    
-    for i in chain.start_index..=chain.end_index {
-        if i >= harmonic_values.len() {
-            break;
-        }
-        
-        let chain_position = i - chain.start_index;
-        let position_ratio = chain_position as f64 / chain.length as f64;
-        
-        let golden_intensity = chain.total_golden_pixels as f64 / chain.length as f64;
-        
-        let chaos_factor = calculate_golden_chaos_factor_monotonic(
-            position_ratio,
-            accumulated_stress,
-            golden_intensity,
-            chain.max_crossing_count as f64,
-        );
-        
-        let harmonic_component = generate_harmonic_component(
-            chain_position,
-            max_harmonics,
-            base_frequency,
-            chaos_factor,
-            position_ratio,
-        );
-        
-        let enhanced_harmonic = harmonic_component * harmonic_strength_multiplier;
-        
-        let base_value = harmonic_values[i];
-        harmonic_values[i] = base_value + (base_value * enhanced_harmonic);
-    }
-}
-
-/// Calculate maximum harmonics using Natural Overtone Series
-fn calculate_max_harmonics(chain_length: usize) -> usize {
-    if chain_length == 0 {
-        return 0;
-    }
-    
-    let log_component = (chain_length as f64).log2().floor() as usize;
-    (log_component + 3).max(1).min(12)
-}
-
-/// Calculate base frequency proportional to leaf circumference
-fn calculate_base_frequency(circumference: f64, contour_points: usize) -> f64 {
-    if circumference <= 0.0 || contour_points == 0 {
-        return 1.0;
-    }
-    
-    let normalized_circumference = circumference / contour_points as f64;
-    2.0 / (1.0 + normalized_circumference / 10.0)
-}
-
-/// Calculate accumulated stress from previous chains
-fn calculate_accumulated_stress(chain_index: usize, global_complexity: f64) -> f64 {
-    let chain_stress = (chain_index as f64 * 0.3).tanh();
-    chain_stress * global_complexity
-}
-
-/// Calculate chaos factor using MONOTONIC progression
-fn calculate_golden_chaos_factor_monotonic(
-    position_ratio: f64,
-    accumulated_stress: f64,
-    golden_intensity: f64,
-    max_golden_count: f64,
-) -> f64 {
-    let log_progression = (1.0 + position_ratio * 9.0).ln() / 10.0_f64.ln();
-    let smooth_progression = 0.8 + position_ratio * 0.4;
-    
-    let golden_factor = if max_golden_count > 0.0 {
-        golden_intensity / max_golden_count
-    } else {
-        1.0
-    };
-    
-    let base_chaos = log_progression * smooth_progression * golden_factor;
-    let stress_enhanced = base_chaos * (1.0 + accumulated_stress);
-    
-    stress_enhanced.min(2.0)
-}
-
-/// Generate harmonic component using natural overtone series
-fn generate_harmonic_component(
-    position: usize,
-    max_harmonics: usize,
-    base_frequency: f64,
-    chaos_factor: f64,
-    position_ratio: f64,
-) -> f64 {
-    if max_harmonics == 0 {
-        return 0.0;
-    }
-    
-    let mut harmonic_sum = 0.0;
-    
-    let seed = (position as f64 * 1000.0 + base_frequency * 100.0) as u64;
-    let mut rng_state = seed;
-    
-    for harmonic_index in 1..=max_harmonics {
-        let frequency = base_frequency * harmonic_index as f64;
-        let amplitude = 1.0 / harmonic_index as f64;
-        
-        rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-        let phase_offset = (rng_state as f64 / u64::MAX as f64) * PI * 2.0;
-        
-        let harmonic_value = amplitude * chaos_factor * 
-            (frequency * position_ratio * PI * 2.0 + phase_offset).sin();
-        
-        harmonic_sum += harmonic_value;
-    }
-    
-    harmonic_sum / max_harmonics as f64
-}
-
-/// Apply additive effects for overlapping chains
-fn apply_additive_harmonic_effects(
-    harmonic_values: &mut [f64],
-    chains: &[GoldenChain],
-) {
-    let mut point_chain_counts = vec![0usize; harmonic_values.len()];
-    
-    for chain in chains {
-        for i in chain.start_index..=chain.end_index {
-            if i < point_chain_counts.len() {
-                point_chain_counts[i] += 1;
-            }
-        }
-    }
-    
-    for (i, &chain_count) in point_chain_counts.iter().enumerate() {
-        if chain_count > 1 && i < harmonic_values.len() {
-            let additive_factor = 1.0 + (chain_count as f64 - 1.0) * 0.3;
-            harmonic_values[i] *= additive_factor;
-        }
-    }
-}
-
 /// Calculate leaf circumference from contour points
 pub fn calculate_leaf_circumference(contour: &[(u32, u32)]) -> f64 {
     if contour.len() < 2 {
@@ -1162,9 +1067,11 @@ pub fn extract_pink_path_signal(features: &[MarginalPointFeatures]) -> Vec<f64> 
         .collect()
 }
 
-/// Calculate spectral entropy from Pink Path signal (WITHOUT smoothing)
+/// REVISED: Calculate spectral entropy from Pink Path signal with continuous sigmoid scaling
 pub fn calculate_spectral_entropy_from_pink_path(
-    features: &[MarginalPointFeatures]
+    features: &[MarginalPointFeatures],
+    sigmoid_k: f64,
+    sigmoid_c: f64,
 ) -> f64 {
     if features.is_empty() {
         return 0.0;
@@ -1176,6 +1083,7 @@ pub fn calculate_spectral_entropy_from_pink_path(
         return 0.0;
     }
     
+    // Calculate coefficient of variation
     let mean = pink_signal.iter().sum::<f64>() / pink_signal.len() as f64;
     let variance = pink_signal.iter()
         .map(|&x| (x - mean).powi(2))
@@ -1184,21 +1092,16 @@ pub fn calculate_spectral_entropy_from_pink_path(
     
     let coefficient_of_variation = if mean > 1e-6 { std_dev / mean } else { 0.0 };
     
-    if coefficient_of_variation < 0.01 {
-        return 0.001 + coefficient_of_variation * 0.01;
-    }
-    
-    if coefficient_of_variation < 0.05 {
-        return 0.01 + coefficient_of_variation * 0.1;
-    }
-    
+    // Calculate raw spectral entropy
     let powers = calculate_power_spectrum_periodic(&pink_signal);
     if powers.is_empty() {
         return 0.0;
     }
     
-    let entropy = calculate_shannon_entropy(&powers);
-    let variation_factor = (coefficient_of_variation * 2.0).min(1.0);
+    let raw_entropy = calculate_shannon_entropy(&powers);
     
-    entropy * variation_factor
+    // Apply continuous sigmoid scaling
+    let sigmoid_scaling = calculate_spectral_entropy_sigmoid_scaling(coefficient_of_variation, sigmoid_k, sigmoid_c);
+    
+    raw_entropy * sigmoid_scaling
 }

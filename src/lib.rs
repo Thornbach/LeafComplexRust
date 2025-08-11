@@ -1,4 +1,4 @@
-// Enhanced src/lib.rs - Updated with simplified Thornfiddle functions
+// Enhanced src/lib.rs - Updated with revised Thornfiddle functions
 
 pub mod config;
 pub mod errors;
@@ -34,20 +34,43 @@ pub use shape_analysis::{
     calculate_circularity,
 };
 
-// Re-export Thornfiddle analysis functions (simplified)
+// Re-export Thornfiddle analysis functions (revised with principled approach)
 pub use thornfiddle::{
+    // REVISED: Spectral entropy functions with continuous sigmoid scaling
     calculate_spectral_entropy_from_contour,
     calculate_spectral_entropy_from_pink_path,
+    calculate_spectral_entropy_from_harmonic_thornfiddle_path,
+    
+    // Legacy versions for backward compatibility
+    calculate_spectral_entropy_from_contour_legacy,
+    calculate_spectral_entropy_from_thornfiddle_path,
+    
+    // Other entropy and complexity functions
     calculate_approximate_entropy_from_pink_path,
     calculate_edge_feature_density,
-    // Golden Pixel Harmonic Thornfiddle functions (with weighted chain scoring)
-    calculate_thornfiddle_path_harmonic,           // Main harmonic function with chain intensity weighting
+    
+    // REVISED: Principled Golden Pixel Harmonic Thornfiddle functions
+    calculate_thornfiddle_path_harmonic,           // Main harmonic function with geometric principles
     calculate_leaf_circumference,
     extract_harmonic_thornfiddle_path_signal,
-    calculate_spectral_entropy_from_harmonic_thornfiddle_path, // Simplified: removed rhythm analysis
+    
+    // Summary and utilities
     create_thornfiddle_summary,                    // Summary with weighted chain metrics
-    // HarmonicResult struct with weighted metrics
-    HarmonicResult,
+    HarmonicResult,                                // Result struct with weighted metrics
+    
+    // Signal extraction utilities
+    extract_pink_path_signal,
+    extract_thornfiddle_path_signal,
+    
+    // Filtering functions
+    filter_petiole_from_lec_features,
+    detect_petiole_sequence,
+    apply_petiole_filter,
+    apply_pink_threshold_filter,
+    
+    // Basic Thornfiddle calculations (for backward compatibility)
+    calculate_thornfiddle_multiplier,
+    calculate_thornfiddle_path,
 };
 
 // Re-export morphology functions including Thornfiddle image creation

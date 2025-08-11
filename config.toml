@@ -9,9 +9,9 @@ gui_resize_dimensions = [1024, 1024]  # Optional [width, height] for GUI mode - 
 opening_kernel_size = 9 # Diameter/radius for the circular opening algorithm's structuring element
 marked_region_color_rgb = [255, 0, 255]  # Bright pink for marking opened regions
 
-# NEW: Adaptive Opening Parameters (for pink region marking)
+# Adaptive Opening Parameters (for pink region marking)
 adaptive_opening_max_density = 75.0      # Density threshold: >=25% non-transparent pixels triggers max opening
-adaptive_opening_max_percentage = 15.0   # Maximum opening percentage of image dimension at high density
+adaptive_opening_max_percentage = 15.0   # Maximum opening percentage of image dimension at high density -> 15
 adaptive_opening_min_percentage = 1.0    # Minimum opening percentage of image dimension at low density
 
 # Analysis Parameters
@@ -54,20 +54,38 @@ thornfiddle_opening_size_percentage = 20.0  # Legacy static opening percentage -
 thornfiddle_pixel_threshold = 5  # Minimum golden pixels crossed to trigger harmonic chain
 thornfiddle_marked_color_rgb = [255, 215, 0]  # Golden yellow for lobe regions
 
-# Harmonic Enhancement Control Parameters
-harmonic_strength_multiplier = 2.0 # Global harmonic strength multiplier (1.0 = normal, 2.0 = double strength, 0.5 = half strength)
-harmonic_min_chain_length = 15 # Minimum chain length (in contour points) to count as a valid harmonic chain for summary statistics
+# NEW: Revised Harmonic Enhancement Parameters (Principled Approach)
+harmonic_max_harmonics = 12  # N_max: Maximum number of harmonics for largest segments relative to leaf circumference
+harmonic_strength_multiplier = 2.0  # Global harmonic strength multiplier (1.0 = normal, 2.0 = double strength)
+harmonic_min_chain_length = 15  # Minimum chain length (in contour points) to count as a valid harmonic chain
+
+# NEW: Spectral Entropy Continuous Sigmoid Scaling Parameters
+spectral_entropy_sigmoid_k = 20.0  # Steepness of sigmoid transition (higher = sharper transition around threshold)
+spectral_entropy_sigmoid_c = 0.04  # Center point of sigmoid transition (coefficient of variation threshold)
 
 # NOTES:
-# - ADAPTIVE OPENING: Pink region marking uses density-based kernel sizing
+#    ADAPTIVE OPENING: Pink region marking uses density-based kernel sizing
 #   * >=25% non-transparent pixels -> 10% of min(width,height) as kernel size
 #   * <25% non-transparent pixels -> Linear scaling down to 1% minimum
 #   * Formula: opening_percentage = min_percentage + (density/max_density) * (max_percentage - min_percentage)
 # 
-# - DYNAMIC THORNFIDDLE: Golden lobe detection uses LMC shape-based kernel sizing
+#   DYNAMIC THORNFIDDLE: Golden lobe detection uses LMC shape-based kernel sizing
 #   * Dynamic opening percentage is calculated using: LMC_ShapeIndex with linear interpolation
 #   * Dynamic kernel size = (dynamic_percentage / 100.0) * LMC_SHORTER_dimension
 #   * For circular leaves (LMC_ShapeIndex = 1.0): uses thornfiddle_max_opening_percentage of LMC shorter dimension
 #   * For elongated leaves (LMC_ShapeIndex >= 5.0): uses thornfiddle_min_opening_percentage of LMC shorter dimension
 #   * This ensures kernel size scales with actual leaf size AND never exceeds the narrow dimension
 #   * PREVENTS DESTRUCTION of thin/narrow leaves by constraining kernel to the limiting dimension
+#
+#   ENHANCEMENT: Principled approach based on geometric properties
+#   * Enhancement Richness: N_h = floor(N_max * (L_seg / C_leaf)) - number of harmonics proportional to segment size
+#   * Enhancement Intensity: W_pos increases linearly from 0 at segment start to 1 at deepest point
+#   * Harmonic Series: Enhancement = W_pos * Σ (1/k) * sin(2π * k * f_base * L_pos) from k=1 to N_h
+#   * Base frequency normalized by leaf circumference for scale invariance
+#   * Eliminates magic numbers and complex "chaos factors" - purely geometric approach
+#
+#   CONTINUOUS SPECTRAL ENTROPY SCALING:
+#   * S(CV) = 1 / (1 + exp(-k * (CV - c))) where CV is coefficient of variation
+#   * Final entropy = H_spectral × S(CV) - prevents artifacts from low-amplitude noise
+#   * Continuous scaling eliminates discontinuities between leaves with similar complexity
+#   * k controls transition steepness, c controls transition center point
