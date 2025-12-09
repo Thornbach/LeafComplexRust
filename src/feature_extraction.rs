@@ -1,47 +1,55 @@
-// Updated src/feature_extraction.rs - Added Thornfiddle_Path_Harmonic field
+// src/feature_extraction.rs - Simplified feature extraction for EC/MC analysis
 
 use image::RgbaImage;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::path_algorithms::{
-    calculate_golden_spiral_params, calculate_gyro_path_length, calculate_straight_path_length,
-    calculate_clr_points, check_spiral_path_validity, check_straight_line_transparency,
-    generate_left_right_spirals, trace_straight_line, calculate_diego_path, 
-    calculate_diego_path_length, calculate_diego_path_pink,
+    calculate_straight_path_length, calculate_diego_path, 
+    calculate_diego_path_length, calculate_diego_path_pink, trace_straight_line,
+    check_straight_line_transparency,
 };
 
+/// Represents features extracted from a single marginal (contour) point
 #[derive(Debug, Clone)]
 pub struct MarginalPointFeatures {
+    /// Index of the point on the contour
     pub point_index: usize,
+    
+    /// Straight-line distance from reference point to marginal point (internal use only)
     pub straight_path_length: f64,
-    pub gyro_path_length: f64,
-    pub gyro_path_perc: f64,
-    pub clr_alpha: u32,
-    pub clr_gamma: u32,
-    // Added fields for left and right spiral paths
-    pub left_clr_alpha: u32,
-    pub left_clr_gamma: u32,
-    pub right_clr_alpha: u32,
-    pub right_clr_gamma: u32,
     
-    // DiegoPath fields
+    /// Diego path length - geodesic distance staying within the leaf
     pub diego_path_length: f64,
-    pub diego_path_perc: f64,
-    pub diego_path_pink: Option<u32>, // Pink pixels along the diego path
     
-    // NEW: Harmonic Thornfiddle Path
+    /// Number of pink pixels crossed by Diego path (EC analysis)
+    pub diego_path_pink: Option<u32>,
+    
+    /// Thornfiddle path value - basic complexity measure
+    pub thornfiddle_path: f64,
+    
+    /// Harmonic thornfiddle path value - enhanced with harmonic analysis
     pub thornfiddle_path_harmonic: f64,
 }
 
+/// Generate features for all marginal points on the contour
+///
+/// # Arguments
+/// * `reference_point` - The reference point (COM or EP)
+/// * `marginal_points` - All points on the leaf contour
+/// * `image` - The processed image
+/// * `marked_image` - Image with pink regions marked (for EC analysis)
+/// * `marked_color` - RGB color used for marking
+/// * `is_ec` - true for EC (pink as opaque), false for MC (pink as transparent)
+///
+/// # Returns
+/// Vector of features for each marginal point
 pub fn generate_features(
     reference_point: (u32, u32),
     marginal_points: &[(u32, u32)],
     image: &RgbaImage,
     marked_image: Option<&RgbaImage>,
-    phi_exponent_factor: f64,
     marked_color: [u8; 3],
-    spiral_steps: u32,
-    is_lec: bool, // true for LEC (Pink as Opaque), false for LMC (Pink as Transparent)
+    is_ec: bool,
 ) -> Result<Vec<MarginalPointFeatures>> {
     if marginal_points.is_empty() {
         return Err(LeafComplexError::NoValidPoints);
@@ -50,17 +58,17 @@ pub fn generate_features(
     let mut features = Vec::with_capacity(marginal_points.len());
     
     // Select the appropriate image based on analysis type
-    let analysis_image = if is_lec {
-        // For LEC, use the marked image where pink regions are opaque
+    let analysis_image = if is_ec {
+        // For EC, use the marked image where pink regions are opaque
         marked_image.unwrap_or(image)
     } else {
-        // For LMC, use the original image
+        // For MC, use the original image
         image
     };
     
     // Process each marginal point
     for (idx, &marginal_point) in marginal_points.iter().enumerate() {
-        // Calculate straight path length
+        // Calculate straight path length (needed for internal calculations)
         let straight_path_length = calculate_straight_path_length(reference_point, marginal_point);
         
         // Trace straight line path
@@ -69,43 +77,22 @@ pub fn generate_features(
         // Check if straight line crosses transparency
         let crosses_transparency = check_straight_line_transparency(&straight_line, analysis_image);
         
-        // Initialize with default values
-        let mut gyro_path_length = 0.0;
-        let mut gyro_path_perc = 0.0;
-        let mut clr_alpha = 0;
-        let mut clr_gamma = 0;
-        
-        // New fields for left and right spiral paths
-        let mut left_clr_alpha = 0;
-        let mut left_clr_gamma = 0;
-        let mut right_clr_alpha = 0;
-        let mut right_clr_gamma = 0;
-        
-        // Calculate DiegoPath - the shortest path that stays within the leaf
-        // If straight line doesn't cross transparency, use it as the DiegoPath
+        // Calculate Diego Path - the shortest path that stays within the leaf
         let diego_path = if crosses_transparency {
             calculate_diego_path(reference_point, marginal_point, analysis_image)
         } else {
             straight_line.clone()
         };
         
-        // IMPORTANT FIX: When straight path doesn't cross transparency, 
-        // Diego path length should exactly equal straight path length
+        // Calculate Diego path length
         let diego_path_length = if crosses_transparency {
             calculate_diego_path_length(&diego_path)
         } else {
-            // Use the exact same value as straight_path_length for consistency
-            straight_path_length
+            straight_path_length // Use exact same value for consistency
         };
         
-        let diego_path_perc = if straight_path_length > 0.0 {
-            (diego_path_length / straight_path_length) * 100.0
-        } else {
-            100.0  // Set to 100% when they're identical (and when straight path length is zero)
-        };
-        
-        // Calculate DiegoPath pink pixels
-        let diego_path_pink = if is_lec && !diego_path.is_empty() {
+        // Calculate Diego path pink pixels (only for EC analysis)
+        let diego_path_pink = if is_ec && !diego_path.is_empty() {
             if let Some(marked) = marked_image {
                 Some(calculate_diego_path_pink(&diego_path, marked, marked_color))
             } else {
@@ -115,99 +102,15 @@ pub fn generate_features(
             None
         };
         
-        // If straight line crosses transparency, try to find a valid golden spiral path
-        if crosses_transparency {
-            // Calculate golden spiral parameters
-            let (spiral_a_coeff, theta_contact) = 
-                calculate_golden_spiral_params(straight_path_length, phi_exponent_factor);
-            
-            // Generate both left and right spiral paths
-            let (left_path, right_path) = generate_left_right_spirals(
-                reference_point,
-                marginal_point,
-                spiral_a_coeff,
-                theta_contact,
-                phi_exponent_factor,
-                spiral_steps as usize,
-            );
-            
-            // Check if left spiral path is valid
-            let left_spiral_valid = check_spiral_path_validity(&left_path, analysis_image);
-            
-            // Check if right spiral path is valid
-            let right_spiral_valid = check_spiral_path_validity(&right_path, analysis_image);
-            
-            // Process the spiral paths if at least one is valid
-            if left_spiral_valid || right_spiral_valid {
-                // Calculate golden spiral path length
-                gyro_path_length = calculate_gyro_path_length(
-                    spiral_a_coeff,
-                    theta_contact,
-                    phi_exponent_factor,
-                );
-                
-                // Calculate percentage as ratio of gyro path length to straight path length
-                gyro_path_perc = (gyro_path_length / straight_path_length) * 100.0;
-                
-                // Calculate CLR values for left spiral path
-                if left_spiral_valid {
-                    let (alpha, gamma) = calculate_clr_points(
-                        reference_point,
-                        marginal_point,
-                        &left_path,
-                        analysis_image,
-                    );
-                    
-                    left_clr_alpha = alpha;
-                    left_clr_gamma = gamma;
-                }
-                
-                // Calculate CLR values for right spiral path
-                if right_spiral_valid {
-                    let (alpha, gamma) = calculate_clr_points(
-                        reference_point,
-                        marginal_point,
-                        &right_path,
-                        analysis_image,
-                    );
-                    
-                    right_clr_alpha = alpha;
-                    right_clr_gamma = gamma;
-                }
-                
-                // Calculate averaged CLR values
-                if left_spiral_valid && right_spiral_valid {
-                    // Average both left and right values
-                    clr_alpha = ((left_clr_alpha as f64 + right_clr_alpha as f64) / 2.0).floor() as u32;
-                    clr_gamma = ((left_clr_gamma as f64 + right_clr_gamma as f64) / 2.0).floor() as u32;
-                } else if left_spiral_valid {
-                    // Use only left values
-                    clr_alpha = left_clr_alpha;
-                    clr_gamma = left_clr_gamma;
-                } else if right_spiral_valid {
-                    // Use only right values
-                    clr_alpha = right_clr_alpha;
-                    clr_gamma = right_clr_gamma;
-                }
-            }
-        }
-        
-        // Create features structure - NOTE: thornfiddle_path_harmonic will be calculated later
+        // Create features structure
+        // Note: thornfiddle values will be calculated later
         let point_features = MarginalPointFeatures {
             point_index: idx,
             straight_path_length,
-            gyro_path_length,
-            gyro_path_perc,
-            clr_alpha,
-            clr_gamma,
-            left_clr_alpha,
-            left_clr_gamma,
-            right_clr_alpha,
-            right_clr_gamma,
             diego_path_length,
-            diego_path_perc,
             diego_path_pink,
-            thornfiddle_path_harmonic: 0.0, // Will be set later after all features are generated
+            thornfiddle_path: 0.0, // Will be calculated later
+            thornfiddle_path_harmonic: 0.0, // Will be calculated later
         };
         
         features.push(point_features);

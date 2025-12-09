@@ -1,3 +1,5 @@
+// src/main.rs - Main entry point for LeafComplexR CLI
+
 mod config;
 mod errors;
 mod feature_extraction;
@@ -8,10 +10,8 @@ mod output;
 mod path_algorithms;
 mod pipeline;
 mod point_analysis;
-mod gui;
 mod thornfiddle;
 mod shape_analysis;
-
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -24,10 +24,9 @@ use errors::{LeafComplexError, Result};
 use image_io::{get_png_files_in_dir, load_image};
 use pipeline::process_image;
 
-
-/// Command-line arguments
+/// Command-line arguments for LeafComplexR
 #[derive(Parser, Debug)]
-#[clap(author, version, about = "LeafComplexR - Leaf Morphology Analysis")]
+#[clap(author, version, about = "LeafComplexR - Leaf Edge and Margin Complexity Analysis")]
 struct Args {
     /// Path to input file or directory
     #[clap(short, long)]
@@ -48,19 +47,18 @@ struct Args {
     /// Enable debug mode (save intermediate images and print more info)
     #[clap(short, long)]
     debug: bool,
-    
-    /// Launch GUI visualization tool
-    #[clap(long)]
-    gui: bool,
 }
 
+/// Reference point argument for CLI
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ReferencePointArg {
+    /// Emerge Point
     EP,
+    /// Center of Mass
     COM,
 }
 
-/// Main function
+/// Main function - orchestrates the analysis pipeline
 fn main() -> Result<()> {
     // Parse command-line arguments
     let args = Args::parse();
@@ -84,21 +82,6 @@ fn main() -> Result<()> {
         };
     }
     
-    // Check if GUI mode is enabled
-    if args.gui {
-        // For GUI mode, we need a single input file
-        let input_path = PathBuf::from(&config.input_path);
-        
-        if input_path.is_file() {
-            println!("Launching GUI mode with image: {}", input_path.display());
-            return gui::run_gui(input_path, config);
-        } else {
-            return Err(LeafComplexError::Config(
-                "GUI mode requires a single input file, not a directory".to_string()
-            ));
-        }
-    }
-    
     // Validate configuration
     config.validate()?;
     
@@ -107,8 +90,8 @@ fn main() -> Result<()> {
     
     // Create output directories
     let output_base = PathBuf::from(&config.output_base_dir);
-    fs::create_dir_all(&output_base.join("LEC"))?;
-    fs::create_dir_all(&output_base.join("LMC"))?;
+    fs::create_dir_all(&output_base.join("EC"))?;
+    fs::create_dir_all(&output_base.join("MC"))?;
     
     if args.debug {
         fs::create_dir_all(&output_base.join("debug"))?;

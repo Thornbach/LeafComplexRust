@@ -285,7 +285,7 @@ pub fn apply_pink_threshold_filter(
 }
 
 /// Filter petiole from LEC features with optional threshold filtering
-pub fn filter_petiole_from_lec_features(
+pub fn filter_petiole_from_ec_features(
     features: &[MarginalPointFeatures],
     enable_petiole_filter: bool,
     remove_completely: bool,
@@ -767,9 +767,8 @@ pub fn calculate_thornfiddle_multiplier(feature: &MarginalPointFeatures) -> f64 
     
     let path_ratio = feature.diego_path_length / feature.straight_path_length;
     let base_multiplier = path_ratio.max(1.0);
-    let clr_factor = (feature.clr_alpha + feature.clr_gamma) as f64 / 1000.0;
     
-    base_multiplier + clr_factor.min(0.5)
+    base_multiplier
 }
 
 /// Calculate Thornfiddle Path with simple multiplier
@@ -975,18 +974,15 @@ fn detect_golden_chains(
     let mut current_chain_start: Option<usize> = None;
     let mut chain_golden_counts = Vec::new();
     
-    for (i, feature) in features.iter().enumerate() {
+    for (i, _) in features.iter().enumerate() {
         if i >= contour_points.len() {
             break;
         }
         
         let marginal_point = contour_points[i];
         
-        let path_to_check = if feature.diego_path_perc > 101.0 {
-            trace_straight_line(reference_point, marginal_point)
-        } else {
-            trace_straight_line(reference_point, marginal_point)
-        };
+        // For MC we always trace the straight line to evaluate golden crossings
+        let path_to_check = trace_straight_line(reference_point, marginal_point);
         
         let golden_count = count_golden_pixels_crossed(&path_to_check, thornfiddle_image, golden_color);
         let crosses_threshold = golden_count >= pixel_threshold;

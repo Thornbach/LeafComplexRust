@@ -1,4 +1,4 @@
-// Enhanced src/output.rs - Updated with new weighted chain metrics
+// src/output.rs - CSV output generation for EC/MC analysis
 
 use std::fs;
 use std::path::Path;
@@ -6,15 +6,26 @@ use csv::Writer;
 
 use crate::errors::{LeafComplexError, Result};
 use crate::feature_extraction::MarginalPointFeatures;
-use crate::thornfiddle::{calculate_thornfiddle_multiplier, calculate_thornfiddle_path};
 
-/// Write LEC (Pink as Opaque) features to CSV
-pub fn write_lec_csv<P: AsRef<Path>>(
+/// Write EC (Edge Complexity) features to CSV
+///
+/// # Arguments
+/// * `features` - Vector of features for each contour point
+/// * `output_dir` - Base output directory
+/// * `filename` - Name of the input file (without extension)
+///
+/// # Output Columns
+/// - Point_Index
+/// - Geodesic (Diego path length)
+/// - Geodesic_EC (Pink pixels crossed)
+/// - GeodesicPath_MC (Thornfiddle path)
+/// - Geodesic_MC_H (Harmonic thornfiddle path)
+pub fn write_ec_csv<P: AsRef<Path>>(
     features: &[MarginalPointFeatures],
     output_dir: P,
     filename: &str,
 ) -> Result<()> {
-    let output_path = output_dir.as_ref().join("LEC").join(format!("{}.csv", filename));
+    let output_path = output_dir.as_ref().join("EC").join(format!("{}.csv", filename));
     
     // Create directory if it doesn't exist
     if let Some(parent) = output_path.parent() {
@@ -25,40 +36,22 @@ pub fn write_lec_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - include DiegoPath and Harmonic fields
+    // Write header
     writer.write_record(&[
         "Point_Index",
-        "StraightPath_Length",
-        "GyroPath_Length",
-        "GyroPath_Perc",
-        "CLR_Alpha",
-        "CLR_Gamma",
-        "Left_CLR_Alpha",
-        "Left_CLR_Gamma",
-        "Right_CLR_Alpha",
-        "Right_CLR_Gamma",
-        "DiegoPath_Length",
-        "DiegoPath_Perc",
-        "DiegoPath_Pink",
-        "Thornfiddle_Path_Harmonic",
+        "Geodesic",
+        "Geodesic_EC",
+        "GeodesicPath_MC",
+        "Geodesic_MC_H",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
     for feature in features {
         writer.write_record(&[
             feature.point_index.to_string(),
-            format!("{:.6}", feature.straight_path_length),
-            format!("{:.6}", feature.gyro_path_length),
-            format!("{:.6}", feature.gyro_path_perc),
-            feature.clr_alpha.to_string(),
-            feature.clr_gamma.to_string(),
-            feature.left_clr_alpha.to_string(),
-            feature.left_clr_gamma.to_string(),
-            feature.right_clr_alpha.to_string(),
-            feature.right_clr_gamma.to_string(),
             format!("{:.6}", feature.diego_path_length),
-            format!("{:.6}", feature.diego_path_perc),
             feature.diego_path_pink.unwrap_or(0).to_string(),
+            format!("{:.6}", feature.thornfiddle_path),
             format!("{:.6}", feature.thornfiddle_path_harmonic),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
@@ -69,13 +62,25 @@ pub fn write_lec_csv<P: AsRef<Path>>(
     Ok(())
 }
 
-pub fn write_lmc_csv<P: AsRef<Path>>(
+/// Write MC (Margin Complexity) features to CSV
+///
+/// # Arguments
+/// * `features` - Vector of features for each contour point
+/// * `output_dir` - Base output directory
+/// * `filename` - Name of the input file (without extension)
+///
+/// # Output Columns
+/// - Point_Index
+/// - Geodesic (Diego path length)
+/// - Geodesic_EC (always 0 for MC)
+/// - GeodesicPath_MC (Thornfiddle path)
+/// - Geodesic_MC_H (Harmonic thornfiddle path)
+pub fn write_mc_csv<P: AsRef<Path>>(
     features: &[MarginalPointFeatures],
     output_dir: P,
     filename: &str,
-    smoothed_thornfiddle_path: Option<&[f64]>,
 ) -> Result<()> {
-    let output_path = output_dir.as_ref().join("LMC").join(format!("{}.csv", filename));
+    let output_path = output_dir.as_ref().join("MC").join(format!("{}.csv", filename));
     
     // Create directory if it doesn't exist
     if let Some(parent) = output_path.parent() {
@@ -86,55 +91,22 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     let mut writer = Writer::from_path(&output_path)
         .map_err(|e| LeafComplexError::CsvOutput(e))?;
     
-    // Write header - include DiegoPath, Thornfiddle, Thornfiddle_Path_Smoothed, and Harmonic fields
+    // Write header
     writer.write_record(&[
         "Point_Index",
-        "StraightPath_Length",
-        "GyroPath_Length",
-        "GyroPath_Perc",
-        "CLR_Alpha",
-        "CLR_Gamma",
-        "Left_CLR_Alpha",
-        "Left_CLR_Gamma",
-        "Right_CLR_Alpha",
-        "Right_CLR_Gamma",
-        "DiegoPath_Length",
-        "DiegoPath_Perc",
-        "Thornfiddle_Multiplier",
-        "Thornfiddle_Path",
-        "Thornfiddle_Path_Smoothed",
-        "Thornfiddle_Path_Harmonic",
+        "Geodesic",
+        "Geodesic_EC",
+        "GeodesicPath_MC",
+        "Geodesic_MC_H",
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Write data
-    for (i, feature) in features.iter().enumerate() {
-        // Calculate Thornfiddle values for this feature
-        let thornfiddle_multiplier = calculate_thornfiddle_multiplier(feature);
-        let thornfiddle_path = calculate_thornfiddle_path(feature);
-        
-        // Get smoothed value if available
-        let thornfiddle_path_smoothed = if let Some(smoothed) = smoothed_thornfiddle_path {
-            smoothed.get(i).copied().unwrap_or(thornfiddle_path)
-        } else {
-            thornfiddle_path // Fallback to unsmoothed if no smoothed data
-        };
-        
+    for feature in features {
         writer.write_record(&[
             feature.point_index.to_string(),
-            format!("{:.6}", feature.straight_path_length),
-            format!("{:.6}", feature.gyro_path_length),
-            format!("{:.6}", feature.gyro_path_perc),
-            feature.clr_alpha.to_string(),
-            feature.clr_gamma.to_string(),
-            feature.left_clr_alpha.to_string(),
-            feature.left_clr_gamma.to_string(),
-            feature.right_clr_alpha.to_string(),
-            feature.right_clr_gamma.to_string(),
             format!("{:.6}", feature.diego_path_length),
-            format!("{:.6}", feature.diego_path_perc),
-            format!("{:.6}", thornfiddle_multiplier),
-            format!("{:.6}", thornfiddle_path),
-            format!("{:.6}", thornfiddle_path_smoothed),
+            "0".to_string(), // MC analysis doesn't have pink pixels
+            format!("{:.6}", feature.thornfiddle_path),
             format!("{:.6}", feature.thornfiddle_path_harmonic),
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     }
@@ -145,38 +117,50 @@ pub fn write_lmc_csv<P: AsRef<Path>>(
     Ok(())
 }
 
-/// ENHANCED: Create Thornfiddle summary CSV with new weighted chain metrics
-pub fn create_thornfiddle_summary<P: AsRef<Path>>(
+/// Create summary CSV with aggregate metrics
+///
+/// # Arguments
+/// * `output_dir` - Base output directory
+/// * `filename` - Name of the input file (without extension)
+/// * `subfolder` - Subfolder name for organization
+/// * `mc_spectral_entropy` - Spectral entropy from MC analysis
+/// * `ec_approximate_entropy` - Approximate entropy from EC analysis
+/// * `ec_length` - Biological length from EC contour
+/// * `mc_length` - Biological length from MC contour
+/// * `ec_width` - Biological width from EC contour
+/// * `mc_width` - Biological width from MC contour
+/// * `ec_shape_index` - Shape index from EC analysis
+/// * `mc_shape_index` - Shape index from MC analysis
+/// * `outline_count` - Number of contour points
+/// * `harmonic_chain_count` - Number of harmonic chains detected
+///
+/// # Output Columns
+/// - ID
+/// - Subfolder
+/// - MC (Spectral entropy from margin complexity)
+/// - EC (Approximate entropy from edge complexity)
+/// - EC_Length, MC_Length
+/// - EC_Width, MC_Width
+/// - EC_ShapeIndex, MC_ShapeIndex
+/// - Outline_Count
+/// - Harmonic_Chain_Count
+pub fn create_summary<P: AsRef<Path>>(
     output_dir: P,
     filename: &str,
     subfolder: &str,
-    spectral_entropy: f64,
-    spectral_entropy_pink: f64,
-    spectral_entropy_contour: f64,
-    approximate_entropy: f64,
-    edge_complexity: f64,
-    lec_circularity: f64,
-    lmc_circularity: f64,
-    area: u32,
-    lec_length: f64,
-    lec_width: f64,
-    lec_shape_index: f64,
-    lmc_length: f64,
-    lmc_width: f64,
-    lmc_shape_index: f64,
-    dynamic_opening_percentage: f64,
-    dynamic_kernel_size: u32,
+    mc_spectral_entropy: f64,
+    ec_approximate_entropy: f64,
+    ec_length: f64,
+    mc_length: f64,
+    ec_width: f64,
+    mc_width: f64,
+    ec_shape_index: f64,
+    mc_shape_index: f64,
     outline_count: u32,
     harmonic_chain_count: usize,
-    weighted_chain_score: f64,     // NEW: Chain intensity weighting
-    rhythm_regularity: f64,        // NEW: Rhythm regularity factor
 ) -> Result<()> {
-    // Create Thornfiddle directory if it doesn't exist
-    let thornfiddle_dir = output_dir.as_ref().join("Thornfiddle");
-    fs::create_dir_all(&thornfiddle_dir).map_err(|e| LeafComplexError::Io(e))?;
-    
-    // Path to summary CSV
-    let summary_path = thornfiddle_dir.join("summary.csv");
+    // Summary goes directly in output directory
+    let summary_path = output_dir.as_ref().join("summary.csv");
     
     // Check if summary file already exists
     let file_exists = summary_path.exists();
@@ -192,59 +176,39 @@ pub fn create_thornfiddle_summary<P: AsRef<Path>>(
         let mut writer = Writer::from_path(&summary_path)
             .map_err(|e| LeafComplexError::CsvOutput(e))?;
         
-        // ENHANCED: Write header with new weighted chain metrics
+        // Write header for new file
         writer.write_record(&[
             "ID",
             "Subfolder",
-            "Spectral_Entropy",
-            "Spectral_Entropy_Pink",
-            "Spectral_Entropy_Contour",
-            "Approximate_Entropy",
-            "Edge_Complexity",
-            "LEC_Circularity",
-            "LMC_Circularity",
-            "Area",
-            "LEC_Length",
-            "LEC_Width",
-            "LEC_ShapeIndex",
-            "LMC_Length",
-            "LMC_Width",
-            "LMC_ShapeIndex",
-            "Dynamic_Opening_Percentage",
-            "Dynamic_Kernel_Size",
+            "MC",
+            "EC",
+            "EC_Length",
+            "MC_Length",
+            "EC_Width",
+            "MC_Width",
+            "EC_ShapeIndex",
+            "MC_ShapeIndex",
             "Outline_Count",
             "Harmonic_Chain_Count",
-            "Weighted_Chain_Score",    // NEW: Chain intensity scoring
-            "Rhythm_Regularity",       // NEW: Rhythm regularity factor
         ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
         
         writer
     };
     
-    // ENHANCED: Write data with new weighted chain metrics
+    // Write data row
     writer.write_record(&[
         filename,
         subfolder,
-        &format!("{:.6}", spectral_entropy),
-        &format!("{:.6}", spectral_entropy_pink),
-        &format!("{:.6}", spectral_entropy_contour),
-        &format!("{:.6}", approximate_entropy),
-        &format!("{:.6}", edge_complexity),
-        &format!("{:.6}", lec_circularity),
-        &format!("{:.6}", lmc_circularity),
-        &area.to_string(),
-        &format!("{:.1}", lec_length),
-        &format!("{:.1}", lec_width),
-        &format!("{:.3}", lec_shape_index),
-        &format!("{:.1}", lmc_length),
-        &format!("{:.1}", lmc_width),
-        &format!("{:.3}", lmc_shape_index),
-        &format!("{:.1}", dynamic_opening_percentage),
-        &dynamic_kernel_size.to_string(),
+        &format!("{:.6}", mc_spectral_entropy),
+        &format!("{:.6}", ec_approximate_entropy),
+        &format!("{:.1}", ec_length),
+        &format!("{:.1}", mc_length),
+        &format!("{:.1}", ec_width),
+        &format!("{:.1}", mc_width),
+        &format!("{:.3}", ec_shape_index),
+        &format!("{:.3}", mc_shape_index),
         &outline_count.to_string(),
         &harmonic_chain_count.to_string(),
-        &format!("{:.2}", weighted_chain_score),    // NEW: 2 decimal places for chain intensity
-        &format!("{:.3}", rhythm_regularity),       // NEW: 3 decimal places for regularity
     ]).map_err(|e| LeafComplexError::CsvOutput(e))?;
     
     // Flush writer

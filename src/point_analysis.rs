@@ -121,7 +121,7 @@ pub fn get_reference_point(
 
 /// Get the reference point specifically for LMC analysis
 /// This uses the LMC image for COM calculation if needed
-pub fn get_lmc_reference_point(
+pub fn get_mc_reference_point(
     lmc_image: &RgbaImage,
     marked_image: &RgbaImage,
     reference_point_choice: &ReferencePointChoice,

@@ -1,9 +1,9 @@
 [package]
 name = "leaf_complex_rust"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 authors = ["Tobias Müller <tobimu@proton.me"]
-description = "A tool for analyzing leaf morphology from PNG images"
+description = "A tool for analyzing leaf edge and margin complexity from PNG images"
 readme = "README.md"
 license = "MIT"
 
@@ -44,17 +44,9 @@ rayon = "1.8"
 bresenham = "0.1.1"
 nalgebra = "0.32.3"
 
-# Basic GUI using minifb (simple framebuffer, cross-platform)
-minifb = "0.24"
-
 # Spectral Entropy
 rustfft = "6.1.0"
 
-[dev-dependencies]
-# Unit testing utilities
-assert_approx_eq = "1.1.0"
-
 [profile.release]
-debug = true  # Include debug symbols
-opt-level = 2  # Use a slightly lower optimization level (3 is max)
-codegen-units = 1  # Slower compilation but more thorough optimizations
+opt-level = 3
+codegen-units = 1

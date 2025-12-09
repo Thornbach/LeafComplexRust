@@ -546,7 +546,7 @@ fn clean_thin_artifacts(image: &RgbaImage, pink_color: [u8; 3]) -> RgbaImage {
 }
 
 /// Improved LMC creation with thin artifact removal
-pub fn create_lmc_with_com_component(
+pub fn create_mc_with_com_component(
     processed_image: &RgbaImage, 
     marked_image: &mut RgbaImage, 
     pink_color: [u8; 3]
