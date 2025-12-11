@@ -1,9 +1,14 @@
-// Analysis Engine - Bridges GUI and Backend
-use std::path::Path;
-use eframe::egui;
+use std::path::{Path, PathBuf};
 use image::{RgbaImage, Rgba, imageops};
+use eframe::egui;
 
-use leaf_complex_rust_lib::{Config, load_image};
+use leaf_complex_rust_lib::{
+    Config, morphology, shape_analysis, point_analysis, 
+    feature_extraction, thornfiddle, load_image,
+};
+
+
+// Import from state.rs, not defining our own
 use crate::state::{AnalysisResult, SummaryStats};
 
 pub struct AnalysisEngine;
@@ -13,26 +18,7 @@ impl AnalysisEngine {
         Self
     }
     
-    pub fn analyze_image(
-        &self,
-        image_path: &Path,
-        config: &Config,
-        ctx: &egui::Context,
-    ) -> Result<AnalysisResult, String> {
-        let input_image = load_image(image_path)
-            .map_err(|e| format!("Failed to load image: {}", e))?;
-        
-        let processed_image = if let Some(dimensions) = config.resize_dimensions {
-            leaf_complex_rust_lib::image_utils::resize_image(&input_image.image, dimensions)
-        } else {
-            input_image.image.clone()
-        };
-        
-        let result = self.run_analysis_pipeline(&processed_image, &input_image.filename, config, ctx)?;
-        
-        Ok(result)
-    }
-    
+    // FIXED: Added the missing generate_thumbnail method
     pub fn generate_thumbnail(
         &self,
         image_path: &Path,
@@ -60,64 +46,65 @@ impl AnalysisEngine {
         Some(load_texture_from_image(ctx, &thumbnail, format!("{}_thumb", input_image.filename)))
     }
     
-    fn run_analysis_pipeline(
+    pub fn analyze_image(
         &self,
-        image: &RgbaImage,
-        filename: &str,
+        image_path: &PathBuf,
         config: &Config,
         ctx: &egui::Context,
     ) -> Result<AnalysisResult, String> {
-        use leaf_complex_rust_lib::*;
+        println!("\n=== Starting Analysis ===");
+        println!("Image: {:?}", image_path);
         
-        println!("=== Starting Analysis for {} ===", filename);
+        let filename = image_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
         
-        let (width, height) = image.dimensions();
-        let total_pixels = (width * height) as f64;
+        let image = image::open(image_path)
+            .map_err(|e| format!("Failed to load image: {}", e))?
+            .to_rgba8();
         
-        let mut non_transparent_count = 0;
-        for y in 0..height {
-            for x in 0..width {
-                let pixel = image.get_pixel(x, y);
-                if pixel[3] > 0 {
-                    non_transparent_count += 1;
-                }
-            }
-        }
-        
-        let non_transparent_percentage = (non_transparent_count as f64 / total_pixels) * 100.0;
-        let opening_percentage = if non_transparent_percentage >= config.adaptive_opening_max_density {
-            config.adaptive_opening_max_percentage
+        let processed_image = if let Some(dimensions) = config.resize_dimensions {
+            image::imageops::resize(
+                &image,
+                dimensions[0],
+                dimensions[1],
+                image::imageops::FilterType::Lanczos3
+            )
         } else {
-            let scaling_factor = non_transparent_percentage / config.adaptive_opening_max_density;
-            config.adaptive_opening_min_percentage + 
-                scaling_factor * (config.adaptive_opening_max_percentage - config.adaptive_opening_min_percentage)
+            image
         };
         
-        let image_dimension = std::cmp::min(width, height) as f64;
-        let kernel_size = ((opening_percentage / 100.0) * image_dimension).round() as u32;
-        let adaptive_kernel_size = kernel_size.max(1);
+        let adaptive_opening_kernel_size = calculate_adaptive_opening_kernel_size(
+            &processed_image,
+            config.adaptive_opening_max_density,
+            config.adaptive_opening_max_percentage,
+            config.adaptive_opening_min_percentage,
+        );
         
-        println!("Adaptive opening kernel size: {}", adaptive_kernel_size);
+        println!("Adaptive opening kernel size: {}", adaptive_opening_kernel_size);
         
-        let opened_image = morphology::apply_opening(image, adaptive_kernel_size)
+        let opened_image = morphology::apply_opening(&processed_image, adaptive_opening_kernel_size)
             .map_err(|e| format!("Opening failed: {}", e))?;
         
         let mut marked_image = mark_opened_regions(
-            image,
+            &processed_image,
             &opened_image,
             config.marked_region_color_rgb,
         );
         
+        // CRITICAL FIX: Clean thin artifacts (single-pixel lines that shouldn't be marked)
+        marked_image = clean_thin_artifacts(&marked_image, config.marked_region_color_rgb);
+        
         let mc_image = morphology::create_mc_with_com_component(
-            image,
+            &processed_image,
             &mut marked_image,
             config.marked_region_color_rgb,
         );
         
-        println!("Images created: original, marked (EC), mc");
+        println!("Created MC image");
         
         let ec_reference_point = point_analysis::get_reference_point(
-            image,
+            &processed_image,
             &marked_image,
             &config.reference_point_choice,
             config.marked_region_color_rgb,
@@ -140,14 +127,14 @@ impl AnalysisEngine {
         println!("Original EC contour points: {}", ec_contour_original.len());
         println!("Original MC contour points: {}", mc_contour_original.len());
         
-        // Calculate metrics from ORIGINAL images
+        // Calculate metrics from ORIGINAL images with area parameter
         let ec_area = shape_analysis::calculate_area(&marked_image);
         let ec_outline_count = ec_contour_original.len() as u32;
-        let ec_circularity = shape_analysis::calculate_circularity_from_contour(&ec_contour_original);
+        let ec_circularity = shape_analysis::calculate_circularity_from_contour(ec_area, &ec_contour_original);
         
         let mc_area = shape_analysis::calculate_area(&mc_image);
         let mc_outline_count = mc_contour_original.len() as u32;
-        let mc_circularity = shape_analysis::calculate_circularity_from_contour(&mc_contour_original);
+        let mc_circularity = shape_analysis::calculate_circularity_from_contour(mc_area, &mc_contour_original);
         
         println!("EC metrics: Area={}, Outline={}, Circ={:.3}", ec_area, ec_outline_count, ec_circularity);
         println!("MC metrics: Area={}, Outline={}, Circ={:.3}", mc_area, mc_outline_count, mc_circularity);
@@ -156,7 +143,7 @@ impl AnalysisEngine {
         let initial_ec_features = feature_extraction::generate_features(
             ec_reference_point,
             &ec_contour_original,
-            image,
+            &processed_image,
             Some(&marked_image),
             config.marked_region_color_rgb,
             true,
@@ -175,7 +162,7 @@ impl AnalysisEngine {
         println!("Initial MC features: {}", initial_mc_features.len());
         
         // Apply petiole filtering
-        let (ec_features, ec_petiole_info) = thornfiddle::filter_petiole_from_ec_features(
+        let (ec_features, _ec_petiole_info) = thornfiddle::filter_petiole_from_ec_features(
             &initial_ec_features,
             config.enable_petiole_filter_ec,
             config.petiole_remove_completely,
@@ -184,9 +171,9 @@ impl AnalysisEngine {
             config.pink_threshold_value,
         );
         
-        let (mc_features, mc_petiole_info) = thornfiddle::filter_petiole_from_ec_features(
+        let (mc_features, _mc_petiole_info) = thornfiddle::filter_petiole_from_ec_features(
             &initial_mc_features,
-            config.enable_petiole_filter_mc,
+            config.enable_petiole_filter_ec,
             config.petiole_remove_completely,
             1.0,
             false,
@@ -225,20 +212,39 @@ impl AnalysisEngine {
         println!("EC Shape: Length={:.1}, Width={:.1}, Index={:.3}, Circ={:.3}", 
                  ec_length, ec_width, ec_shape_index, ec_circularity);
         
-        let (mc_length, mc_width, mc_shape_index) = shape_analysis::calculate_length_width_shape_index(
-            &mc_image,
-            config.marked_region_color_rgb,
-        );
+        let (mc_length, mc_width, mc_shape_index, mc_shorter_dimension) = 
+            shape_analysis::calculate_length_width_shape_index_with_shorter(
+                &mc_image,
+                config.marked_region_color_rgb,
+            );
         
         println!("MC Shape: Length={:.1}, Width={:.1}, Index={:.3}, Circ={:.3}", 
                  mc_length, mc_width, mc_shape_index, mc_circularity);
         
-        let thornfiddle_image = morphology::create_thornfiddle_image(
-            &mc_image,
-            config.thornfiddle_marked_color_rgb,
+        // Calculate dynamic opening for thornfiddle
+        let dynamic_opening_percentage = shape_analysis::calculate_dynamic_opening_percentage(
+            mc_shape_index,
+            config.thornfiddle_max_opening_percentage,
+            config.thornfiddle_min_opening_percentage,
         );
         
+        let dynamic_kernel_size = ((dynamic_opening_percentage / 100.0) * mc_shorter_dimension)
+            .round() as u32;
+        let dynamic_kernel_size = dynamic_kernel_size.max(1);
+        
+        println!("Dynamic thornfiddle: MC Shape Index {:.3} -> {:.1}% -> {} px kernel", 
+                 mc_shape_index, dynamic_opening_percentage, dynamic_kernel_size);
+        
+        // Create thornfiddle image
+        let thornfiddle_image = morphology::create_thornfiddle_image(
+            &mc_image,
+            dynamic_kernel_size,
+            config.thornfiddle_marked_color_rgb,
+        ).map_err(|e| format!("Failed to create thornfiddle image: {}", e))?;
+        
         let ec_circumference = thornfiddle::calculate_leaf_circumference(&ec_contour_original);
+        
+        // Calculate harmonic results
         let ec_harmonic_result = thornfiddle::calculate_thornfiddle_path_harmonic(
             &ec_features,
             ec_circumference,
@@ -253,6 +259,7 @@ impl AnalysisEngine {
         );
         
         let mc_circumference = thornfiddle::calculate_leaf_circumference(&mc_contour_original);
+        
         let mc_harmonic_result = thornfiddle::calculate_thornfiddle_path_harmonic(
             &mc_features,
             mc_circumference,
@@ -269,7 +276,7 @@ impl AnalysisEngine {
         println!("EC harmonic chains: {}", ec_harmonic_result.valid_chain_count);
         println!("MC harmonic chains: {}", mc_harmonic_result.valid_chain_count);
         
-        let mut ec_features_final = ec_features;
+        let mut ec_features_final = ec_features.clone();
         for (i, feature) in ec_features_final.iter_mut().enumerate() {
             if let Some(&harmonic_value) = ec_harmonic_result.harmonic_values.get(i) {
                 feature.thornfiddle_path_harmonic = harmonic_value;
@@ -277,7 +284,7 @@ impl AnalysisEngine {
             feature.thornfiddle_path = thornfiddle::calculate_thornfiddle_path(feature);
         }
         
-        let mut mc_features_final = mc_features;
+        let mut mc_features_final = mc_features.clone();
         for (i, feature) in mc_features_final.iter_mut().enumerate() {
             if let Some(&harmonic_value) = mc_harmonic_result.harmonic_values.get(i) {
                 feature.thornfiddle_path_harmonic = harmonic_value;
@@ -285,13 +292,15 @@ impl AnalysisEngine {
             feature.thornfiddle_path = thornfiddle::calculate_thornfiddle_path(feature);
         }
         
+        // FIXED: Calculate MC spectral entropy with correct parameters
+        // The function returns (entropy, smoothed_path), we only need entropy
         let mc_spectral_entropy = thornfiddle::calculate_spectral_entropy_from_harmonic_thornfiddle_path(
             &mc_features_final,
             mc_harmonic_result.valid_chain_count,
             config.thornfiddle_smoothing_strength,
             config.spectral_entropy_sigmoid_k,
             config.spectral_entropy_sigmoid_c,
-        ).0;
+        ).0;  // FIXED: Take only the first element (entropy value)
         
         let ec_approximate_entropy = thornfiddle::calculate_approximate_entropy_from_pink_path(
             &ec_features_final,
@@ -299,13 +308,12 @@ impl AnalysisEngine {
             config.approximate_entropy_r,
         );
         
-        println!("MC spectral entropy: {:.4}", mc_spectral_entropy);
-        println!("EC approximate entropy: {:.4}", ec_approximate_entropy);
+        println!("EC Approximate Entropy: {:.6}", ec_approximate_entropy);
+        println!("MC Spectral Entropy: {:.6}", mc_spectral_entropy);
         
-        // CRITICAL FIX: Extract diego_path_pink (pink pixels crossed), NOT diego_path_length!
         let ec_data: Vec<(f64, f64)> = ec_features_final.iter()
             .enumerate()
-            .map(|(i, f)| (i as f64, f.diego_path_pink.unwrap_or(0) as f64))  // Pink pixels!
+            .map(|(i, f)| (i as f64, f.diego_path_pink.unwrap_or(0) as f64))
             .collect();
         
         let mc_data: Vec<(f64, f64)> = mc_features_final.iter()
@@ -318,7 +326,7 @@ impl AnalysisEngine {
         let ec_overlay = create_transparent_overlay(&marked_image, &[255, 0, 255]);
         let mc_overlay = create_transparent_overlay(&thornfiddle_image, &[255, 215, 0]);
         
-        let original_texture = load_texture_from_image(ctx, image, format!("{}_original", filename));
+        let original_texture = load_texture_from_image(ctx, &processed_image, format!("{}_original", filename));
         let ec_texture = load_texture_from_image(ctx, &ec_overlay, format!("{}_ec", filename));
         let mc_texture = load_texture_from_image(ctx, &mc_overlay, format!("{}_mc", filename));
         
@@ -347,6 +355,7 @@ impl AnalysisEngine {
                  mc_data.len(), mc_contour_filtered.len(), mc_features_final.len());
         println!();
         
+        // FIXED: Return AnalysisResult matching state.rs structure
         Ok(AnalysisResult {
             ec_data,
             mc_data,
@@ -362,6 +371,102 @@ impl AnalysisEngine {
             mc_reference_point,
         })
     }
+}
+
+/// Remove thin artifacts from marked regions (single-pixel-wide lines)
+/// Filters out any pink regions where pixels have <= 2 pink neighbors
+fn clean_thin_artifacts(marked_image: &RgbaImage, marked_color: [u8; 3]) -> RgbaImage {
+    let (width, height) = marked_image.dimensions();
+    let mut cleaned = marked_image.clone();
+    
+    // Helper to check if pixel is pink
+    let is_pink = |x: u32, y: u32| -> bool {
+        if x >= width || y >= height {
+            return false;
+        }
+        let pixel = marked_image.get_pixel(x, y);
+        pixel[0] == marked_color[0] && 
+        pixel[1] == marked_color[1] && 
+        pixel[2] == marked_color[2] &&
+        pixel[3] > 0
+    };
+    
+    // Count pink neighbors in 8-connectivity
+    let count_pink_neighbors = |x: u32, y: u32| -> usize {
+        let mut count = 0;
+        for dy in -1i32..=1 {
+            for dx in -1i32..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx >= 0 && ny >= 0 {
+                    if is_pink(nx as u32, ny as u32) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    };
+    
+    // First pass: mark pixels to remove
+    let mut to_remove = vec![];
+    for y in 0..height {
+        for x in 0..width {
+            if is_pink(x, y) {
+                let neighbor_count = count_pink_neighbors(x, y);
+                // Remove if 2 or fewer neighbors (thin line or isolated pixel)
+                if neighbor_count <= 2 {
+                    to_remove.push((x, y));
+                }
+            }
+        }
+    }
+    
+    // Second pass: remove marked pixels
+    for (x, y) in to_remove.iter() {
+        cleaned.put_pixel(*x, *y, Rgba([0, 0, 0, 0]));
+    }
+    
+    println!("Cleaned {} thin artifact pixels from pink regions", to_remove.len());
+    cleaned
+}
+
+fn calculate_adaptive_opening_kernel_size(
+    image: &RgbaImage,
+    max_density: f64,
+    max_percentage: f64,
+    min_percentage: f64,
+) -> u32 {
+    let (width, height) = image.dimensions();
+    let total_pixels = (width * height) as f64;
+    
+    let mut non_transparent_count = 0;
+    for pixel in image.pixels() {
+        if pixel[3] > 0 {
+            non_transparent_count += 1;
+        }
+    }
+    
+    let non_transparent_percentage = (non_transparent_count as f64 / total_pixels) * 100.0;
+    
+    let opening_percentage = if non_transparent_percentage >= max_density {
+        max_percentage
+    } else {
+        let scale = non_transparent_percentage / max_density;
+        min_percentage + (max_percentage - min_percentage) * scale
+    };
+    
+    let smaller_dimension = width.min(height) as f64;
+    let adaptive_kernel_size = ((opening_percentage / 100.0) * smaller_dimension).round() as u32;
+    let adaptive_kernel_size = adaptive_kernel_size.max(1);
+    
+    println!("Adaptive opening: {:.1}% density -> {:.1}% opening -> {} px kernel", 
+             non_transparent_percentage, opening_percentage, adaptive_kernel_size);
+    
+    adaptive_kernel_size
 }
 
 fn mark_opened_regions(
@@ -394,12 +499,9 @@ fn create_transparent_overlay(image: &RgbaImage, color_to_keep: &[u8; 3]) -> Rgb
         for x in 0..width {
             let pixel = image.get_pixel(x, y);
             
-            let color_match = (pixel[0] as i32 - color_to_keep[0] as i32).abs() <= 10 &&
-                             (pixel[1] as i32 - color_to_keep[1] as i32).abs() <= 10 &&
-                             (pixel[2] as i32 - color_to_keep[2] as i32).abs() <= 10;
-            
-            if color_match && pixel[3] > 0 {
-                overlay.put_pixel(x, y, Rgba([pixel[0], pixel[1], pixel[2], 255]));
+            if pixel[3] > 0 && pixel[0] == color_to_keep[0] && 
+               pixel[1] == color_to_keep[1] && pixel[2] == color_to_keep[2] {
+                overlay.put_pixel(x, y, *pixel);
             } else {
                 overlay.put_pixel(x, y, Rgba([0, 0, 0, 0]));
             }
@@ -409,21 +511,14 @@ fn create_transparent_overlay(image: &RgbaImage, color_to_keep: &[u8; 3]) -> Rgb
     overlay
 }
 
-fn load_texture_from_image(
-    ctx: &egui::Context,
-    image: &RgbaImage,
-    name: String,
-) -> egui::TextureHandle {
+fn load_texture_from_image(ctx: &egui::Context, image: &RgbaImage, name: String) -> egui::TextureHandle {
     let (width, height) = image.dimensions();
-    let pixels: Vec<egui::Color32> = image
-        .pixels()
-        .map(|p| egui::Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]))
-        .collect();
+    let image_data: Vec<u8> = image.as_raw().clone();
     
-    let color_image = egui::ColorImage {
-        size: [width as usize, height as usize],
-        pixels,
-    };
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+        [width as usize, height as usize],
+        &image_data,
+    );
     
     ctx.load_texture(name, color_image, egui::TextureOptions::default())
 }

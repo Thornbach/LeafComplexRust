@@ -1,4 +1,6 @@
-// UI Rendering Components
+// leaf_complex_gui/src/ui.rs - COMPLETE VERSION
+// Contains all UI rendering functions
+
 use eframe::egui;
 use egui_plot::{Line, Plot, PlotPoints, Points};
 use std::sync::{Arc, Mutex};
@@ -14,7 +16,7 @@ const CYAN_COLOR: egui::Color32 = egui::Color32::from_rgb(0, 255, 255);
 pub fn render_image_view(
     ui: &mut egui::Ui,
     state: &Arc<Mutex<AppState>>,
-    ctx: &egui::Context,
+    _ctx: &egui::Context,  // FIXED: Added underscore prefix
     analyze_clicked: &mut bool,
     batch_clicked: &mut bool,
 ) {
@@ -65,14 +67,13 @@ pub fn render_image_view(
             }
         });
         
-        // Show selected count on batch button
         let batch_label = if selected_count > 0 {
-            format!("⏩ Batch ({})", selected_count)
+            format!("⏩ Analyze Selected ({})", selected_count)
         } else {
-            "⏩ Batch (All)".to_string()
+            "⏩ Analyze All".to_string()
         };
         
-        ui.add_enabled_ui(has_current && !analyzing && !batch_processing, |ui| {
+        ui.add_enabled_ui(!analyzing && !batch_processing, |ui| {
             if ui.button(batch_label).clicked() {
                 *batch_clicked = true;
             }
@@ -81,26 +82,31 @@ pub fn render_image_view(
     
     ui.separator();
     
-    let available_size = ui.available_size();
-    let (response, painter) = ui.allocate_painter(available_size, egui::Sense::drag());
+    let response = ui.allocate_rect(
+        ui.available_rect_before_wrap(),
+        egui::Sense::click_and_drag(),
+    );
+    let rect = response.rect;
     
     let state_guard = state.lock().unwrap();
     
     if let Some(result) = state_guard.current_result() {
-        if let Some(texture) = &result.original_texture {
-            let tex_size = texture.size_vec2();
+        let painter = ui.painter_at(rect);
+        
+        if let Some(original_texture) = &result.original_texture {
+            let tex_size = original_texture.size_vec2();
             let zoom = state_guard.zoom_level;
-            let offset = state_guard.pan_offset;
+            let pan = state_guard.pan_offset;
             
-            let image_size = tex_size * zoom;
-            let rect = egui::Rect::from_center_size(
-                response.rect.center() + offset,
-                image_size,
+            let scaled_size = egui::vec2(tex_size.x * zoom, tex_size.y * zoom);
+            let img_rect = egui::Rect::from_center_size(
+                rect.center() + pan,
+                scaled_size,
             );
             
             painter.image(
-                texture.id(),
-                rect,
+                original_texture.id(),
+                img_rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
@@ -109,7 +115,7 @@ pub fn render_image_view(
                 if let Some(ec_texture) = &result.ec_image_texture {
                     painter.image(
                         ec_texture.id(),
-                        rect,
+                        img_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         egui::Color32::WHITE,
                     );
@@ -120,7 +126,7 @@ pub fn render_image_view(
                 if let Some(mc_texture) = &result.mc_image_texture {
                     painter.image(
                         mc_texture.id(),
-                        rect,
+                        img_rect,
                         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                         egui::Color32::WHITE,
                     );
@@ -128,9 +134,9 @@ pub fn render_image_view(
             }
             
             let pixel_to_screen = |pixel_x: u32, pixel_y: u32| -> egui::Pos2 {
-                let img_origin = rect.min;
-                let scale_x = rect.width() / tex_size.x;
-                let scale_y = rect.height() / tex_size.y;
+                let img_origin = img_rect.min;
+                let scale_x = img_rect.width() / tex_size.x;
+                let scale_y = img_rect.height() / tex_size.y;
                 
                 let screen_x = img_origin.x + (pixel_x as f32 * scale_x);
                 let screen_y = img_origin.y + (pixel_y as f32 * scale_y);
@@ -153,58 +159,42 @@ pub fn render_image_view(
                         ),
                     };
                     
-                    if point_idx < contour.len() && point_idx < features.len() {
-                        let marginal_point = contour[point_idx];
-                        let feature = &features[point_idx];
-                        
-                        let ref_screen_pos = pixel_to_screen(reference_point.0, reference_point.1);
-                        painter.circle_filled(ref_screen_pos, 6.0 * zoom, BLUE_COLOR);
-                        painter.circle_stroke(
-                            ref_screen_pos,
-                            6.0 * zoom,
-                            egui::Stroke::new(2.0 * zoom, egui::Color32::WHITE),
-                        );
-                        
-                        let marginal_screen_pos = pixel_to_screen(marginal_point.0, marginal_point.1);
-                        painter.circle_filled(marginal_screen_pos, 5.0 * zoom, RED_COLOR);
-                        painter.circle_stroke(
-                            marginal_screen_pos,
-                            5.0 * zoom,
-                            egui::Stroke::new(2.0 * zoom, egui::Color32::WHITE),
-                        );
+                    if point_idx < features.len() && point_idx < contour.len() {
+                        let (contour_x, contour_y) = contour[point_idx];
+                        let contour_screen = pixel_to_screen(contour_x, contour_y);
+                        let ref_screen = pixel_to_screen(reference_point.0, reference_point.1);
                         
                         painter.line_segment(
-                            [ref_screen_pos, marginal_screen_pos],
-                            egui::Stroke::new(2.0 * zoom, CYAN_COLOR),
+                            [ref_screen, contour_screen],
+                            egui::Stroke::new(2.0 * zoom, BLUE_COLOR),
                         );
+                        
+                        painter.circle_filled(ref_screen, 4.0 * zoom, CYAN_COLOR);
+                        painter.circle_filled(contour_screen, 5.0 * zoom, RED_COLOR);
                         
                         let midpoint = egui::pos2(
-                            (ref_screen_pos.x + marginal_screen_pos.x) / 2.0,
-                            (ref_screen_pos.y + marginal_screen_pos.y) / 2.0,
+                            (ref_screen.x + contour_screen.x) / 2.0,
+                            (ref_screen.y + contour_screen.y) / 2.0,
                         );
                         
-                        let label_text = format!(
-                            "Geodesic: {:.1}px\nStraight: {:.1}px\nPink: {}",
-                            feature.diego_path_length,
-                            feature.straight_path_length,
-                            feature.diego_path_pink.unwrap_or(0)
-                        );
+                        // ENHANCED: Show straight line, curved path, AND pink/harmonic values
+                        let straight_len = features[point_idx].straight_path_length;
+                        let curved_len = features[point_idx].diego_path_length;
                         
-                        let galley = painter.layout_no_wrap(
-                            label_text.clone(),
-                            egui::FontId::proportional(12.0 * zoom),
-                            egui::Color32::WHITE,
-                        );
-                        
-                        let text_rect = egui::Align2::CENTER_CENTER.anchor_rect(
-                            egui::Rect::from_min_size(midpoint, galley.size())
-                        );
-                        
-                        painter.rect_filled(
-                            text_rect.expand(4.0),
-                            4.0,
-                            egui::Color32::from_black_alpha(200),
-                        );
+                        let label_text = match state_guard.selected_point_type {
+                            PointType::EC => {
+                                // For EC: show pink pixels crossed
+                                let pink_pixels = features[point_idx].diego_path_pink.unwrap_or(0);
+                                format!("Straight: {:.1}\nCurved: {:.1}\nPink: {}", 
+                                        straight_len, curved_len, pink_pixels)
+                            },
+                            PointType::MC => {
+                                // For MC: show harmonic thornfiddle value
+                                let harmonic = features[point_idx].thornfiddle_path_harmonic;
+                                format!("Straight: {:.1}\nCurved: {:.1}\nHarmonic: {:.1}", 
+                                        straight_len, curved_len, harmonic)
+                            }
+                        };
                         
                         painter.text(
                             midpoint,
@@ -236,8 +226,9 @@ pub fn render_image_view(
             }
         }
     } else {
+        let painter = ui.painter_at(rect);
         painter.text(
-            response.rect.center(),
+            rect.center(),
             egui::Align2::CENTER_CENTER,
             if state_guard.current_image().is_some() {
                 "Click 'Analyze' to start analysis"
@@ -266,7 +257,6 @@ pub fn render_image_view(
     }
 }
 
-/// FIXED: EC graph now shows Pink Pixels, not path length!
 pub fn render_ec_graph(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
     ui.heading("📊 Edge Complexity (EC)");
     
@@ -299,7 +289,7 @@ pub fn render_ec_graph(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
         .height(200.0)
         .legend(egui_plot::Legend::default())
         .x_axis_label("Point Index")
-        .y_axis_label("Pink Pixels Crossed");  // FIXED: Now correct!
+        .y_axis_label("Pink Pixels Crossed");
     
     let response = plot.show(ui, |plot_ui| {
         plot_ui.line(line);
@@ -462,6 +452,7 @@ pub fn render_summary_panel(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
     }
 }
 
+// CRITICAL: This function must be present!
 pub fn render_analysis_panel(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>, _ctx: &egui::Context) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         render_ec_graph(ui, state);
@@ -478,13 +469,13 @@ pub fn render_analysis_panel(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>, _c
     });
 }
 
-/// NEW: Thumbnail strip with checkboxes and selection buttons
+// FIXED: Thumbnail strip with proper state_guard handling
 pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
-    let state_guard = state.lock().unwrap();
     let mut selected_idx: Option<usize> = None;
     let mut selection_changes: Vec<(usize, bool)> = Vec::new();
     
     ui.horizontal(|ui| {
+        let state_guard = state.lock().unwrap();
         ui.heading("📂 Workspace Images");
         ui.label(format!("({} images, {} selected)", 
                         state_guard.images.len(), 
@@ -492,7 +483,6 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
         
         ui.separator();
         
-        // NEW: Selection buttons
         let select_all_clicked = ui.button("✓ Select All").clicked();
         let deselect_all_clicked = ui.button("✗ Deselect All").clicked();
         
@@ -504,8 +494,6 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
         if deselect_all_clicked {
             state.lock().unwrap().deselect_all();
         }
-        
-        let state_guard = state.lock().unwrap();
     });
     
     ui.separator();
@@ -513,6 +501,8 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
     egui::ScrollArea::horizontal()
         .auto_shrink([false, true])
         .show(ui, |ui| {
+            let state_guard = state.lock().unwrap();
+            
             ui.horizontal(|ui| {
                 let current_idx = state_guard.current_image_index;
                 
@@ -535,16 +525,14 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
                     
                     frame.show(ui, |ui| {
                         ui.set_width(130.0);
-                        ui.set_height(130.0);  // Increased for checkbox
+                        ui.set_height(130.0);
                         
                         ui.vertical_centered(|ui| {
-                            // NEW: Checkbox at top
                             let mut selected = img_info.selected;
                             if ui.checkbox(&mut selected, "").changed() {
                                 selection_changes.push((idx, selected));
                             }
                             
-                            // Thumbnail
                             let (rect, response) = ui.allocate_exact_size(
                                 egui::vec2(120.0, 90.0),
                                 egui::Sense::click(),
@@ -593,11 +581,10 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
                     });
                 }
             });
+            
+            drop(state_guard);
         });
     
-    drop(state_guard);
-    
-    // Apply selection changes
     if !selection_changes.is_empty() {
         let mut state_guard = state.lock().unwrap();
         for (idx, selected) in selection_changes {
@@ -607,7 +594,6 @@ pub fn render_thumbnail_strip(ui: &mut egui::Ui, state: &Arc<Mutex<AppState>>) {
         }
     }
     
-    // Handle image selection
     if let Some(idx) = selected_idx {
         state.lock().unwrap().select_image(idx);
     }

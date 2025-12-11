@@ -505,11 +505,14 @@ impl eframe::App for LeafComplexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if self.show_config_editor {
             let mut show = self.show_config_editor;
-            if self.config_editor.show(ctx, &mut show) {
+            let config_updated = self.config_editor.show(ctx, &mut show);
+            self.show_config_editor = show;  // Update immediately
+            
+            if config_updated {
                 let new_config = self.config_editor.get_config();
                 *self.config.lock().unwrap() = new_config;
+                println!("✅ Configuration updated and applied!");
             }
-            self.show_config_editor = show;
         }
         
         let mut analyze_clicked = false;
