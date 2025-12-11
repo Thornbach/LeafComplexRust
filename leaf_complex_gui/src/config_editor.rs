@@ -42,11 +42,11 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Resize Images:");
                             if let Some(ref mut dims) = self.config.resize_dimensions {
-                                if ui.add(egui::DragValue::new(&mut dims[0]).clamp_range(128..=2048)).changed() {
+                                if ui.add(egui::DragValue::new(&mut dims[0]).range(128..=2048)).changed() {
                                     self.modified = true;
                                 }
                                 ui.label("×");
-                                if ui.add(egui::DragValue::new(&mut dims[1]).clamp_range(128..=2048)).changed() {
+                                if ui.add(egui::DragValue::new(&mut dims[1]).range(128..=2048)).changed() {
                                     self.modified = true;
                                 }
                             } else {
@@ -57,7 +57,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Opening Kernel Size:");
                             if ui.add(egui::DragValue::new(&mut self.config.opening_kernel_size)
-                                .clamp_range(1..=50)).changed() {
+                                .range(1..=50)).changed() {
                                 self.modified = true;
                             }
                         });
@@ -70,7 +70,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Max Density Threshold (%):");
                             if ui.add(egui::DragValue::new(&mut self.config.adaptive_opening_max_density)
-                                .clamp_range(0.0..=100.0)
+                                .range(0.0..=100.0)
                                 .speed(1.0)).changed() {
                                 self.modified = true;
                             }
@@ -79,7 +79,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Max Opening Percentage (%):");
                             if ui.add(egui::DragValue::new(&mut self.config.adaptive_opening_max_percentage)
-                                .clamp_range(0.0..=50.0)
+                                .range(0.0..=50.0)
                                 .speed(0.5)).changed() {
                                 self.modified = true;
                             }
@@ -88,7 +88,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Min Opening Percentage (%):");
                             if ui.add(egui::DragValue::new(&mut self.config.adaptive_opening_min_percentage)
-                                .clamp_range(0.0..=10.0)
+                                .range(0.0..=10.0)
                                 .speed(0.1)).changed() {
                                 self.modified = true;
                             }
@@ -144,7 +144,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Threshold Value:");
                             if ui.add(egui::DragValue::new(&mut self.config.pink_threshold_value)
-                                .clamp_range(0.0..=10.0)
+                                .range(0.0..=10.0)
                                 .speed(0.1)).changed() {
                                 self.modified = true;
                             }
@@ -158,7 +158,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Max Opening % (circular):");
                             if ui.add(egui::DragValue::new(&mut self.config.thornfiddle_max_opening_percentage)
-                                .clamp_range(0.0..=50.0)
+                                .range(0.0..=50.0)
                                 .speed(0.5)).changed() {
                                 self.modified = true;
                             }
@@ -167,7 +167,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Min Opening % (elongated):");
                             if ui.add(egui::DragValue::new(&mut self.config.thornfiddle_min_opening_percentage)
-                                .clamp_range(0.0..=50.0)
+                                .range(0.0..=50.0)
                                 .speed(0.5)).changed() {
                                 self.modified = true;
                             }
@@ -176,7 +176,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Pixel Threshold:");
                             if ui.add(egui::DragValue::new(&mut self.config.thornfiddle_pixel_threshold)
-                                .clamp_range(1..=20)).changed() {
+                                .range(1..=20)).changed() {
                                 self.modified = true;
                             }
                         });
@@ -184,7 +184,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Smoothing Strength:");
                             if ui.add(egui::DragValue::new(&mut self.config.thornfiddle_smoothing_strength)
-                                .clamp_range(0.5..=5.0)
+                                .range(0.5..=5.0)
                                 .speed(0.1)).changed() {
                                 self.modified = true;
                             }
@@ -198,7 +198,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Max Harmonics:");
                             if ui.add(egui::DragValue::new(&mut self.config.harmonic_max_harmonics)
-                                .clamp_range(1..=24)).changed() {
+                                .range(1..=24)).changed() {
                                 self.modified = true;
                             }
                         });
@@ -206,7 +206,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Strength Multiplier:");
                             if ui.add(egui::DragValue::new(&mut self.config.harmonic_strength_multiplier)
-                                .clamp_range(0.5..=5.0)
+                                .range(0.5..=5.0)
                                 .speed(0.1)).changed() {
                                 self.modified = true;
                             }
@@ -215,7 +215,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Min Chain Length:");
                             if ui.add(egui::DragValue::new(&mut self.config.harmonic_min_chain_length)
-                                .clamp_range(5..=50)).changed() {
+                                .range(5..=50)).changed() {
                                 self.modified = true;
                             }
                         });
@@ -228,7 +228,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Pattern Length (m):");
                             if ui.add(egui::DragValue::new(&mut self.config.approximate_entropy_m)
-                                .clamp_range(1..=5)).changed() {
+                                .range(1..=5)).changed() {
                                 self.modified = true;
                             }
                         });
@@ -236,7 +236,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Tolerance (r):");
                             if ui.add(egui::DragValue::new(&mut self.config.approximate_entropy_r)
-                                .clamp_range(0.05..=0.5)
+                                .range(0.05..=0.5)
                                 .speed(0.01)).changed() {
                                 self.modified = true;
                             }
@@ -245,7 +245,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Scaling Factor:");
                             if ui.add(egui::DragValue::new(&mut self.config.ec_scaling_factor)
-                                .clamp_range(1.0..=10.0)
+                                .range(1.0..=10.0)
                                 .speed(0.1)).changed() {
                                 self.modified = true;
                             }
@@ -259,7 +259,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Sigmoid Steepness (k):");
                             if ui.add(egui::DragValue::new(&mut self.config.spectral_entropy_sigmoid_k)
-                                .clamp_range(5.0..=50.0)
+                                .range(5.0..=50.0)
                                 .speed(1.0)).changed() {
                                 self.modified = true;
                             }
@@ -268,7 +268,7 @@ impl ConfigEditor {
                         ui.horizontal(|ui| {
                             ui.label("Sigmoid Center (c):");
                             if ui.add(egui::DragValue::new(&mut self.config.spectral_entropy_sigmoid_c)
-                                .clamp_range(0.01..=0.1)
+                                .range(0.01..=0.1)
                                 .speed(0.001)).changed() {
                                 self.modified = true;
                             }

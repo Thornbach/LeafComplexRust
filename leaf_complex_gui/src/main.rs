@@ -36,7 +36,7 @@ fn main() -> Result<(), eframe::Error> {
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
+    let fonts = egui::FontDefinitions::default();
     
     // Add custom fonts if desired
     // fonts.font_data.insert(...);
